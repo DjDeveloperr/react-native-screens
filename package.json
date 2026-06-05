@@ -74,6 +74,7 @@
     "warn-once": "^0.1.0"
   },
   "peerDependencies": {
+    "@nativescript/react-native": "*",
     "react": "*",
     "react-native": ">=0.82.0"
   },
