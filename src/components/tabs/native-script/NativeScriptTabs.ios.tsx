@@ -273,52 +273,6 @@ function layoutTabsMountView(tabController: any) {
   mountView.autoresizingMask = flexibleSizeMask();
 }
 
-function viewContainsDescendant(view: any, descendant: any): boolean {
-  'worklet';
-  if (!view || !descendant || typeof descendant.isDescendantOfView !== 'function') {
-    return false;
-  }
-  try {
-    return descendant.isDescendantOfView(view) === true;
-  } catch {
-    return false;
-  }
-}
-
-function directSubviewContainingView(parentView: any, descendant: any): any {
-  'worklet';
-  const subviews = parentView?.subviews;
-  const count = arrayCount(subviews);
-  for (let index = 0; index < count; index++) {
-    const subview = arrayItem(subviews, index);
-    if (viewContainsDescendant(subview, descendant)) {
-      return subview;
-    }
-  }
-  return null;
-}
-
-function insertSelectedViewBelowTabBar(tabController: any, selectedView: any): boolean {
-  'worklet';
-  const hostView = tabController?.view;
-  const tabBar = tabController?.tabBar;
-  const tabBarHostSubview = directSubviewContainingView(hostView, tabBar);
-  const tabBarSuperview = tabBarHostSubview?.superview;
-  if (
-    !selectedView ||
-    !tabBarHostSubview ||
-    !tabBarSuperview ||
-    typeof tabBarSuperview.insertSubviewBelowSubview !== 'function'
-  ) {
-    return false;
-  }
-  if (selectedView.superview && typeof selectedView.removeFromSuperview === 'function') {
-    selectedView.removeFromSuperview();
-  }
-  tabBarSuperview.insertSubviewBelowSubview(selectedView, tabBarHostSubview);
-  return true;
-}
-
 function keepTabBarVisible(tabController: any) {
   'worklet';
   const tabBar = tabController?.tabBar;
@@ -334,18 +288,7 @@ function keepTabBarVisible(tabController: any) {
   const hostHeight = hostFrame?.size?.height ?? hostView.frame?.size?.height ?? 0;
   if (width > 0 && hostHeight > 0) {
     const safeBottom = hostView.safeAreaInsets?.bottom ?? 0;
-    let tabBarHeight = 49 + safeBottom;
-    const CGSizeMake = nativeValue('CGSizeMake');
-    if (typeof tabBar.sizeThatFits === 'function') {
-      const fittingSize =
-        typeof CGSizeMake === 'function'
-          ? tabBar.sizeThatFits(CGSizeMake(width, tabBarHeight))
-          : tabBar.sizeThatFits({width, height: tabBarHeight});
-      const measuredHeight = fittingSize?.height ?? fittingSize?.size?.height ?? 0;
-      if (measuredHeight > 0) {
-        tabBarHeight = Math.max(tabBarHeight, measuredHeight);
-      }
-    }
+    const tabBarHeight = 49 + safeBottom;
     const CGRectMake = nativeValue('CGRectMake');
     tabBar.frame =
       typeof CGRectMake === 'function'
@@ -383,7 +326,12 @@ function scheduleTabBarVisible(tabController: any) {
   }
   const keepVisible = () => {
     'worklet';
-    keepTabBarVisible(tabController);
+    try {
+      keepTabBarVisible(tabController);
+    } catch {
+      // The scheduled tab bar pass is best-effort; the controller can be stale
+      // after a fast tab/stack transition.
+    }
   };
   setTimeout(keepVisible, 0);
   setTimeout(keepVisible, 32);
@@ -416,13 +364,6 @@ function reconcileSelectedTabControllerView(tabController: any, explicitSelected
       : {origin: {x: 0, y: 0}, size: {width, height: hostHeight}};
   selectedController.view.autoresizingMask = flexibleSizeMask();
   selectedController.view.clipsToBounds = true;
-  if (!insertSelectedViewBelowTabBar(tabController, selectedController.view) && !selectedController.view.superview) {
-    if (typeof tabController.view.insertSubviewBelowSubview === 'function' && tabController.tabBar) {
-      tabController.view.insertSubviewBelowSubview(selectedController.view, tabController.tabBar);
-    } else if (typeof tabController.view.insertSubviewAtIndex === 'function') {
-      tabController.view.insertSubviewAtIndex(selectedController.view, 0);
-    }
-  }
   layoutHostedReactSubviews(selectedController);
   keepTabBarVisible(tabController);
   scheduleTabBarVisible(tabController);
@@ -501,7 +442,59 @@ const TabsHostController =
         });
         return selectedScreenKey;
       };
+      const emitObservedSelection = (selectedController: any) => {
+        'worklet';
+        const key = '__rnsNativeScriptTabsRegistry';
+        const globalObject = globalThis as Record<string, any>;
+        const registry = globalObject[key];
+        const host = registry?.hosts?.[ctx.hostId];
+        if (!host || !selectedController) {
+          return;
+        }
+        const screen = screenForController(host, selectedController);
+        if (!screen || screen.preventNativeSelection === true) {
+          return;
+        }
+        if (host.selectedScreenKey === screen.screenKey) {
+          reconcileSelectedTabControllerView(host.controller, selectedController);
+          return;
+        }
+        emitSelection(host, selectedController, false);
+        reconcileSelectedTabControllerView(host.controller, selectedController);
+      };
       controller.delegate = ctx.delegate(controller, delegateProtocol, {
+        tabBarControllerShouldSelectTab(_tabController: any, tab: any) {
+          'worklet';
+          const key = '__rnsNativeScriptTabsRegistry';
+          const globalObject = globalThis as Record<string, any>;
+          const registry = globalObject[key];
+          const host = registry?.hosts?.[ctx.hostId];
+          if (!host) {
+            return true;
+          }
+          const screen = screenForController(host, tab?.viewController);
+          if (!screen) {
+            return true;
+          }
+          return screen.preventNativeSelection !== true;
+        },
+        tabBarControllerDidSelectTabPreviousTab(_tabController: any, selectedTab: any) {
+          'worklet';
+          const key = '__rnsNativeScriptTabsRegistry';
+          const globalObject = globalThis as Record<string, any>;
+          const registry = globalObject[key];
+          const host = registry?.hosts?.[ctx.hostId];
+          if (!host) {
+            return;
+          }
+          const selectedController = selectedTab?.viewController;
+          const screen = screenForController(host, selectedController);
+          if (!screen) {
+            return;
+          }
+          emitSelection(host, selectedController, host.selectedScreenKey === screen.screenKey);
+          reconcileSelectedTabControllerView(_tabController, selectedController);
+        },
         tabBarControllerShouldSelectViewController(_tabController: any, selectedController: any) {
           'worklet';
           const key = '__rnsNativeScriptTabsRegistry';
@@ -518,15 +511,7 @@ const TabsHostController =
           if (screen.preventNativeSelection === true) {
             return false;
           }
-          const repeated = host.selectedScreenKey === screen.screenKey;
-          const emittedScreenKey = emitSelection(host, selectedController, repeated);
-          if (!repeated && emittedScreenKey) {
-            if (host.controller.tabBar && selectedController.tabBarItem) {
-              host.controller.tabBar.selectedItem = selectedController.tabBarItem;
-            }
-            reconcileSelectedTabControllerView(host.controller, selectedController);
-          }
-          return false;
+          return true;
         },
         tabBarControllerDidSelectViewController(_tabController: any, selectedController: any) {
           'worklet';
@@ -549,6 +534,14 @@ const TabsHostController =
           emitSelection(host, selectedController, host.selectedScreenKey === screen.screenKey);
           reconcileSelectedTabControllerView(_tabController);
         },
+      });
+      ctx.observe(controller, 'selectedViewController', (selectedController: any) => {
+        'worklet';
+        emitObservedSelection(selectedController);
+      });
+      ctx.observe(controller, 'selectedIndex', () => {
+        'worklet';
+        emitObservedSelection(controller.selectedViewController);
       });
       return controller;
     },
@@ -633,9 +626,6 @@ const TabsHostController =
               screen.controller.willMoveToParentViewController(null);
               screen.controller.removeFromParentViewController();
             }
-            if (screen.controller.view?.superview) {
-              screen.controller.view.removeFromSuperview();
-            }
             controllers[controllers.length] = screen.controller;
           }
         }
@@ -706,9 +696,6 @@ const TabsHostController =
             if (parent && parent !== host.controller) {
               screen.controller.willMoveToParentViewController(null);
               screen.controller.removeFromParentViewController();
-            }
-            if (screen.controller.view?.superview) {
-              screen.controller.view.removeFromSuperview();
             }
             controllers[controllers.length] = screen.controller;
           }
@@ -824,9 +811,6 @@ const TabsScreenController =
               screen.controller.willMoveToParentViewController(null);
               screen.controller.removeFromParentViewController();
             }
-            if (screen.controller.view?.superview) {
-              screen.controller.view.removeFromSuperview();
-            }
             controllers[controllers.length] = screen.controller;
           }
         }
@@ -903,9 +887,6 @@ const TabsScreenController =
                 screen.controller.willMoveToParentViewController(null);
                 screen.controller.removeFromParentViewController();
               }
-              if (screen.controller.view?.superview) {
-                screen.controller.view.removeFromSuperview();
-              }
               controllers[controllers.length] = screen.controller;
             }
           }
@@ -971,9 +952,6 @@ const TabsScreenController =
               if (parent && parent !== host.controller) {
                 screen.controller.willMoveToParentViewController(null);
                 screen.controller.removeFromParentViewController();
-              }
-              if (screen.controller.view?.superview) {
-                screen.controller.view.removeFromSuperview();
               }
               controllers[controllers.length] = screen.controller;
             }
@@ -1084,68 +1062,10 @@ export function NativeScriptTabsHost(props: TabsHostProps) {
         const registry = globalObject.__rnsNativeScriptTabsRegistry;
         const host = registry?.hosts?.[targetHostId];
         const controller = host?.controller;
-        const hostView = controller?.view;
-        let selectedView = controller?.selectedViewController?.view;
-        const tabBar = controller?.tabBar;
-        const screens = host?.screens;
-        if (screens && host?.selectedScreenKey) {
-          for (let index = 0; index < screens.length; index++) {
-            const screen = screens[index];
-            if (screen?.screenKey === host.selectedScreenKey && screen.controller?.view) {
-              selectedView = screen.controller.view;
-              break;
-            }
-          }
-        }
-        if (!hostView || !selectedView || !tabBar) {
+        if (!controller) {
           return;
         }
-
-        const subviews = hostView.subviews;
-        const count = !subviews ? 0 : typeof subviews.count === 'number' ? subviews.count : (subviews.length ?? 0);
-        let tabBarWrapper = null;
-        for (let index = 0; index < count; index++) {
-          const subview =
-            subviews && typeof subviews.objectAtIndex === 'function'
-              ? subviews.objectAtIndex(index)
-              : subviews?.[index];
-          if (!subview || subview === selectedView || typeof tabBar.isDescendantOfView !== 'function') {
-            continue;
-          }
-          try {
-            if (tabBar.isDescendantOfView(subview) === true) {
-              tabBarWrapper = subview;
-              break;
-            }
-          } catch {
-            // Keep walking; some private UIKit wrappers can reject descendant checks while transitioning.
-          }
-        }
-
-        const hostBounds = hostView.bounds ?? hostView.frame;
-        if (hostBounds) {
-          selectedView.frame = hostBounds;
-          selectedView.autoresizingMask = 18;
-        }
-        if (typeof tabBarWrapper?.superview?.insertSubviewBelowSubview === 'function') {
-          if (selectedView.superview && typeof selectedView.removeFromSuperview === 'function') {
-            selectedView.removeFromSuperview();
-          }
-          tabBarWrapper.superview.insertSubviewBelowSubview(selectedView, tabBarWrapper);
-        }
-
-        tabBar.hidden = false;
-        tabBar.alpha = 1;
-        tabBar.userInteractionEnabled = true;
-        if (tabBar.layer) {
-          tabBar.layer.zPosition = 1000;
-        }
-        if (tabBarWrapper?.layer) {
-          tabBarWrapper.layer.zPosition = 1000;
-        }
-        if (tabBarWrapper?.superview && typeof tabBarWrapper.superview.bringSubviewToFront === 'function') {
-          tabBarWrapper.superview.bringSubviewToFront(tabBarWrapper);
-        }
+        reconcileSelectedTabControllerView(controller);
       }, hostId).catch(() => undefined);
     };
     applyTabBarLayout();
@@ -1190,7 +1110,8 @@ export function NativeScriptTabsScreen(props: TabsScreenNativeScriptProps) {
   return (
     <TabsScreenController
       {...props}
-      attachController={false}
+      attachController
+      attachControllerView={false}
       attachNativeView={false}
       hostId={context.hostId}
       style={styles.fill}>
