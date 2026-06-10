@@ -47,11 +47,25 @@ declare module '@nativescript/react-native' {
           attachController?: boolean;
           attachControllerView?: boolean;
           attachNativeView?: boolean;
+          onHostReady?: (event: {
+            nativeEvent: {
+              hostReadyId: string;
+              hostId: string;
+              nativeViewHandle: string;
+              childrenViewHandle: string;
+              controllerHandle: string;
+              hasChildren: boolean;
+            };
+          }) => void;
         }
     >
   >;
 
   export function getClass<T = unknown>(name: string): T | null;
+  export function refreshUIKitHostView(view: unknown): boolean;
+  export function runtimeInvoker<T extends (...args: any[]) => any>(
+    callback: T,
+  ): T;
   export function runOnUI<Args extends unknown[], ReturnValue>(
     callback: (...args: Args) => ReturnValue,
     ...args: Args
@@ -60,8 +74,19 @@ declare module '@nativescript/react-native' {
   const NativeScript: {
     defineUIViewController: typeof defineUIViewController;
     getClass: typeof getClass;
+    refreshUIKitHostView: typeof refreshUIKitHostView;
+    runtimeInvoker: typeof runtimeInvoker;
     runOnUI: typeof runOnUI;
   };
 
   export default NativeScript;
+}
+
+declare global {
+  namespace interop {
+    function Block<T extends (...args: any[]) => any>(
+      encoding: string,
+      callback: T,
+    ): T;
+  }
 }

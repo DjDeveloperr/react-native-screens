@@ -1,11 +1,15 @@
 import React from 'react';
-import { ViewProps } from 'react-native';
+import { Platform, View, type ViewProps } from 'react-native';
 import ScreenFooterNativeComponent from '../fabric/ScreenFooterNativeComponent';
 
 /**
  * Unstable API
  */
 function ScreenFooter(props: ViewProps) {
+  if (Platform.OS === 'ios') {
+    return <View {...props} />;
+  }
+
   return <ScreenFooterNativeComponent {...props} />;
 }
 

@@ -229,6 +229,145 @@ describe('NativeScriptTabsHost', () => {
     ]);
   });
 
+  it('selects a tab from the root tap recognizer when the tab bar gets first hit', () => {
+    const NativeScriptRuntime = jest.requireActual(
+      '@nativescript/react-native',
+    );
+    NativeScriptRuntime.__resetDefinitions();
+
+    const makeFrame = (width = 320, height = 640, y = 0) => ({
+      origin: { x: 0, y },
+      size: { width, height },
+    });
+    const makeView = () => ({
+      addGestureRecognizer: jest.fn(),
+      addSubview: jest.fn(),
+      bringSubviewToFront: jest.fn(),
+      frame: makeFrame(),
+      layer: {},
+      setNeedsLayout: jest.fn(),
+      layoutIfNeeded: jest.fn(),
+    });
+    const firstController = { view: makeView() };
+    const secondController = { view: makeView() };
+    const tabController: any = {
+      view: makeView(),
+      tabBar: {
+        ...makeView(),
+        bounds: makeFrame(320, 83),
+        frame: makeFrame(320, 83, 557),
+        items: [{ title: 'UIKit' }, { title: 'React Nav' }],
+      },
+      selectedViewController: firstController,
+      viewControllers: [firstController, secondController],
+    };
+    const tapRecognizer = {
+      cancelsTouchesInView: true,
+      delaysTouchesBegan: true,
+      delaysTouchesEnded: true,
+      numberOfTapsRequired: 0,
+    };
+    const emitted: [string, unknown][] = [];
+    let tapAction: ((gesture: unknown) => void) | undefined;
+
+    (global as Record<string, unknown>).CGRectMake = (
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+    ) => ({
+      origin: { x, y },
+      size: { width, height },
+    });
+    (global as Record<string, unknown>).__nativeScriptNativeApi = {
+      NSArray: {
+        arrayWithArray: (items: unknown[]) => items,
+      },
+      UIGestureRecognizerState: {
+        Ended: 3,
+        Recognized: 3,
+      },
+      UITabBarController: {
+        alloc: () => ({
+          init: () => tabController,
+        }),
+      },
+      UITapGestureRecognizer: {
+        alloc: () => ({
+          init: () => tapRecognizer,
+        }),
+      },
+      UIView: {
+        alloc: () => ({
+          init: () => makeView(),
+        }),
+      },
+    };
+
+    jest.requireActual('./NativeScriptTabs.ios');
+
+    const hostDefinition = NativeScriptRuntime.__getDefinitions().find(
+      (definition: { debugName?: string }) =>
+        definition.debugName === 'RNSTabsHostIOS.NativeScript',
+    );
+    const controller = hostDefinition.createController({
+      delegate: (
+        _controller: unknown,
+        _protocol: unknown,
+        implementation: unknown,
+      ) => implementation,
+      emit: (eventName: string, payload: unknown) => {
+        emitted.push([eventName, payload]);
+      },
+      gestureAction: (_gesture: unknown, action: (gesture: unknown) => void) => {
+        tapAction = action;
+      },
+      hostId: 'test-host',
+      observe: jest.fn(),
+    });
+
+    (global as Record<string, unknown>).__rnsNativeScriptTabsRegistry = {
+      hosts: {
+        'test-host': {
+          controller,
+          provenance: 4,
+          screens: [
+            { controller: firstController, index: 0, screenKey: 'uikit' },
+            { controller: secondController, index: 1, screenKey: 'rnn' },
+          ],
+          selectedScreenKey: 'uikit',
+        },
+      },
+    };
+
+    expect(tabController.view.addGestureRecognizer).toHaveBeenCalledWith(
+      tapRecognizer,
+    );
+
+    tapAction?.({
+      locationInView: (view: unknown) =>
+        view === tabController.view ? { x: 240, y: 580 } : { x: 240, y: 20 },
+      state: 3,
+    });
+
+    expect(tabController.selectedIndex).toBe(1);
+    expect(tabController.selectedViewController).toBe(secondController);
+    expect(emitted).toEqual([
+      [
+        'onTabSelected',
+        {
+          nativeEvent: {
+            actionOrigin: 'user',
+            hasTriggeredSpecialEffect: false,
+            isRepeated: false,
+            provenance: 5,
+            selectedScreenKey: 'rnn',
+          },
+        },
+      ],
+    ]);
+  });
+
   it('applies iOS tab bar controller display settings on first create', () => {
     const NativeScriptRuntime = jest.requireActual(
       '@nativescript/react-native',
@@ -296,6 +435,116 @@ describe('NativeScriptTabsHost', () => {
 
     expect(tabController.mode).toBe(11);
     expect(tabController.tabBarMinimizeBehavior).toBe(33);
+  });
+
+  it('lets UITabBarController own the native tab bar frame during layout', () => {
+    const NativeScriptRuntime = jest.requireActual(
+      '@nativescript/react-native',
+    );
+    NativeScriptRuntime.__resetDefinitions();
+
+    const makeFrame = (width = 320, height = 640, y = 0) => ({
+      origin: { x: 0, y },
+      size: { width, height },
+    });
+    const makeView = () => ({
+      addSubview: jest.fn(),
+      bringSubviewToFront: jest.fn(),
+      frame: makeFrame(),
+      layer: {},
+      setNeedsLayout: jest.fn(),
+      layoutIfNeeded: jest.fn(),
+    });
+    const tabBarFrame = makeFrame(320, 83, 557);
+    const firstController = { view: makeView() };
+    const secondController = { view: makeView() };
+    const tabController: any = {
+      view: makeView(),
+      tabBar: {
+        ...makeView(),
+        frame: tabBarFrame,
+        items: [{ title: 'UIKit' }, { title: 'React Nav' }],
+      },
+      selectedViewController: firstController,
+      setViewControllersAnimated: jest.fn((controllers: unknown[]) => {
+        tabController.viewControllers = controllers;
+      }),
+    };
+
+    (global as Record<string, unknown>).CGRectMake = (
+      x: number,
+      y: number,
+      width: number,
+      height: number,
+    ) => ({
+      origin: { x, y },
+      size: { width, height },
+    });
+    (global as Record<string, unknown>).__nativeScriptNativeApi = {
+      NSArray: {
+        arrayWithArray: (items: unknown[]) => items,
+      },
+      UITabBarController: {
+        alloc: () => ({
+          init: () => tabController,
+        }),
+      },
+      UIView: {
+        alloc: () => ({
+          init: () => makeView(),
+        }),
+      },
+    };
+
+    jest.requireActual('./NativeScriptTabs.ios');
+
+    const hostDefinition = NativeScriptRuntime.__getDefinitions().find(
+      (definition: { debugName?: string }) =>
+        definition.debugName === 'RNSTabsHostIOS.NativeScript',
+    );
+    const controller = hostDefinition.createController({
+      delegate: (
+        _controller: unknown,
+        _protocol: unknown,
+        implementation: unknown,
+      ) => implementation,
+      emit: jest.fn(),
+      hostId: 'test-host',
+      observe: jest.fn(),
+    });
+    (global as Record<string, unknown>).__rnsNativeScriptTabsRegistry = {
+      hosts: {
+        'test-host': {
+          controller,
+          provenance: 0,
+          screens: [
+            {
+              controller: firstController,
+              index: 0,
+              screenKey: 'index',
+              title: 'UIKit',
+            },
+            {
+              controller: secondController,
+              index: 1,
+              screenKey: 'react-navigation',
+              title: 'React Nav',
+            },
+          ],
+          selectedScreenKey: 'index',
+        },
+      },
+    };
+
+    hostDefinition.update(controller, {
+      hostId: 'test-host',
+      navStateRequest: {
+        baseProvenance: 0,
+        selectedScreenKey: 'index',
+      },
+    });
+
+    expect(tabController.tabBar.frame).toBe(tabBarFrame);
   });
 
   it('commits route titles onto visible UIKit tab bar items', () => {
@@ -512,5 +761,45 @@ describe('NativeScriptTabsHost', () => {
       selectedImage: selectedIcon,
       title: 'UIKit',
     });
+  });
+
+  it('does not install a persistent tab bar restore interval', () => {
+    const NativeScriptRuntime = jest.requireActual(
+      '@nativescript/react-native',
+    );
+    NativeScriptRuntime.__resetDefinitions();
+    jest.useFakeTimers();
+    const setIntervalSpy = jest.spyOn(global, 'setInterval');
+    let renderer: { unmount: () => void } | undefined;
+
+    try {
+      const React = jest.requireActual('react');
+      const TestRenderer = jest.requireActual('react-test-renderer');
+      const { NativeScriptTabsHost } = jest.requireActual(
+        './NativeScriptTabs.ios',
+      );
+
+      TestRenderer.act(() => {
+        renderer = TestRenderer.create(
+          React.createElement(NativeScriptTabsHost, {
+            navStateRequest: {
+              baseProvenance: 0,
+              selectedScreenKey: 'index',
+            },
+          }),
+        );
+      });
+
+      expect(setIntervalSpy).not.toHaveBeenCalled();
+    } finally {
+      if (renderer) {
+        const TestRenderer = jest.requireActual('react-test-renderer');
+        TestRenderer.act(() => {
+          renderer?.unmount();
+        });
+      }
+      setIntervalSpy.mockRestore();
+      jest.useRealTimers();
+    }
   });
 });

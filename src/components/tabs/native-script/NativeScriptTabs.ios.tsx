@@ -33,6 +33,12 @@ function nativeValue(name: string): any {
   return api?.[name] ?? globalObject[name];
 }
 
+function gestureRecognizerState(name: string, fallback: number): number {
+  'worklet';
+  const values = nativeValue('UIGestureRecognizerState');
+  return values?.[name] ?? values?.[name.toLowerCase()] ?? fallback;
+}
+
 function nativeColor(value: unknown, fallback: string): any {
   'worklet';
   const UIColor = nativeValue('UIColor');
@@ -473,14 +479,6 @@ function flexibleSizeMask(): number {
   );
 }
 
-function flexibleWidthTopMarginMask(): number {
-  'worklet';
-  const autoresizing = nativeValue('UIViewAutoresizing');
-  return (
-    (autoresizing?.FlexibleWidth ?? 2) + (autoresizing?.FlexibleTopMargin ?? 32)
-  );
-}
-
 function isNativeScrollView(view: any): boolean {
   'worklet';
   const UIScrollView = nativeValue('UIScrollView');
@@ -578,23 +576,6 @@ function keepTabBarVisible(tabController: any) {
   tabBar.hidden = false;
   tabBar.alpha = 1;
   tabBar.userInteractionEnabled = true;
-  const hostFrame = hostView.bounds ?? hostView.frame;
-  const width = hostFrame?.size?.width ?? hostView.frame?.size?.width ?? 0;
-  const hostHeight =
-    hostFrame?.size?.height ?? hostView.frame?.size?.height ?? 0;
-  if (width > 0 && hostHeight > 0) {
-    const safeBottom = hostView.safeAreaInsets?.bottom ?? 0;
-    const tabBarHeight = 49 + safeBottom;
-    const CGRectMake = nativeValue('CGRectMake');
-    tabBar.frame =
-      typeof CGRectMake === 'function'
-        ? CGRectMake(0, hostHeight - tabBarHeight, width, tabBarHeight)
-        : {
-            origin: { x: 0, y: hostHeight - tabBarHeight },
-            size: { width, height: tabBarHeight },
-          };
-    tabBar.autoresizingMask = flexibleWidthTopMarginMask();
-  }
   if (typeof tabBar.setNeedsLayout === 'function') {
     tabBar.setNeedsLayout();
   }
@@ -892,6 +873,19 @@ function commitTabsHost(host: any) {
   finishTabControllerCommit(host.controller, orderedScreens);
 }
 
+function runTabsHostCommit(hostId: string, token: number) {
+  'worklet';
+  const registry = (globalThis as Record<string, any>)
+    .__rnsNativeScriptTabsRegistry;
+  const host = registry?.hosts?.[hostId];
+
+  if (!host || host.commitToken !== token) {
+    return;
+  }
+
+  commitTabsHost(host);
+}
+
 function scheduleTabsHostCommit(hostId: string) {
   'worklet';
   const registry = (globalThis as Record<string, any>)
@@ -905,25 +899,12 @@ function scheduleTabsHostCommit(hostId: string) {
   const token = (host.commitToken ?? 0) + 1;
   host.commitToken = token;
 
-  const runCommit = () => {
-    'worklet';
-    const currentRegistry = (globalThis as Record<string, any>)
-      .__rnsNativeScriptTabsRegistry;
-    const currentHost = currentRegistry?.hosts?.[hostId];
-
-    if (!currentHost || currentHost.commitToken !== token) {
-      return;
-    }
-
-    commitTabsHost(currentHost);
-  };
-
   if (typeof setTimeout === 'function') {
-    setTimeout(runCommit, 0);
-    setTimeout(runCommit, 16);
-    setTimeout(runCommit, 64);
+    setTimeout(runTabsHostCommit, 0, hostId, token);
+    setTimeout(runTabsHostCommit, 16, hostId, token);
+    setTimeout(runTabsHostCommit, 64, hostId, token);
   } else {
-    runCommit();
+    runTabsHostCommit(hostId, token);
   }
 }
 
@@ -1060,6 +1041,123 @@ const TabsHostController = NativeScriptRuntime.defineUIViewController<
         },
       });
       return selectedScreenKey;
+    };
+    const installTabBarTapRecognizer = () => {
+      'worklet';
+      const UITapGestureRecognizer =
+        api?.UITapGestureRecognizer ?? globals.UITapGestureRecognizer;
+      if (
+        !UITapGestureRecognizer ||
+        typeof UITapGestureRecognizer.alloc !== 'function' ||
+        typeof ctx.gestureAction !== 'function' ||
+        typeof controller?.view?.addGestureRecognizer !== 'function' ||
+        controller.__rnsNativeScriptTabBarTapRecognizer
+      ) {
+        return;
+      }
+
+      const allocated = UITapGestureRecognizer.alloc();
+      const tap =
+        allocated && typeof allocated.init === 'function'
+          ? allocated.init()
+          : allocated;
+
+      if (!tap) {
+        return;
+      }
+
+      tap.cancelsTouchesInView = false;
+      tap.delaysTouchesBegan = false;
+      tap.delaysTouchesEnded = false;
+      tap.numberOfTapsRequired = 1;
+      controller.__rnsNativeScriptTabBarTapRecognizer = tap;
+
+      const endedState = gestureRecognizerState('Ended', 3);
+      const recognizedState = gestureRecognizerState('Recognized', 3);
+
+      ctx.gestureAction(tap, (gesture: any) => {
+        'worklet';
+        const state = gesture?.state;
+        if (state !== endedState && state !== recognizedState) {
+          return;
+        }
+
+        const tabBar = controller?.tabBar;
+        if (!tabBar || tabBar.hidden || tabBar.alpha <= 0.01) {
+          return;
+        }
+
+        const point =
+          typeof gesture?.locationInView === 'function'
+            ? gesture.locationInView(tabBar)
+            : null;
+        const rootPoint =
+          typeof gesture?.locationInView === 'function'
+            ? gesture.locationInView(controller.view)
+            : null;
+        const bounds = tabBar.bounds ?? tabBar.frame;
+        const frame = tabBar.frame ?? bounds;
+        const width = bounds?.size?.width ?? 0;
+        const height = bounds?.size?.height ?? 0;
+        const frameX = frame?.origin?.x ?? 0;
+        const frameY = frame?.origin?.y ?? 0;
+        const frameWidth = frame?.size?.width ?? width;
+        const frameHeight = frame?.size?.height ?? height;
+        const x =
+          rootPoint && frameWidth > 0
+            ? (rootPoint.x ?? 0) - frameX
+            : (point?.x ?? 0);
+        const y =
+          rootPoint && frameHeight > 0
+            ? (rootPoint.y ?? 0) - frameY
+            : (point?.y ?? 0);
+        const verticalHitSlop = 28;
+        const items = tabBar.items;
+        const count = arrayCount(items);
+
+        if (width <= 0 || height <= 0 || count <= 0) {
+          return;
+        }
+        if (
+          x < 0 ||
+          y < -verticalHitSlop ||
+          x > width ||
+          y > height + verticalHitSlop
+        ) {
+          return;
+        }
+
+        const selectedIndex = Math.max(
+          0,
+          Math.min(count - 1, Math.floor((x / width) * count)),
+        );
+        const selectedController = arrayItem(
+          controller.viewControllers,
+          selectedIndex,
+        );
+        const key = '__rnsNativeScriptTabsRegistry';
+        const registry = (globalThis as Record<string, any>)[key];
+        const host = registry?.hosts?.[ctx.hostId];
+        const screen = host
+          ? screenForController(host, selectedController)
+          : null;
+
+        if (!host || !screen || screen.preventNativeSelection === true) {
+          return;
+        }
+
+        const repeated = host.selectedScreenKey === screen.screenKey;
+        if (!repeated) {
+          host.skipNextDidSelectScreenKey = screen.screenKey;
+          controller.selectedIndex = selectedIndex;
+          controller.selectedViewController = selectedController;
+          emitSelection(host, selectedController, false);
+        }
+
+        reconcileSelectedTabControllerView(controller, selectedController);
+      });
+
+      controller.view.addGestureRecognizer(tap);
     };
     const emitObservedSelection = (selectedController: any) => {
       'worklet';
@@ -1198,6 +1296,7 @@ const TabsHostController = NativeScriptRuntime.defineUIViewController<
       'worklet';
       emitObservedSelection(controller.selectedViewController);
     });
+    installTabBarTapRecognizer();
     return controller;
   },
   childrenView(controller: any) {
@@ -1391,40 +1490,45 @@ const TabsScreenController = NativeScriptRuntime.defineUIViewController<
 export function NativeScriptTabsHost(props: TabsHostProps) {
   const hostId = React.useId();
   const { onTabSelected } = props;
-  const [nativeSelectionTick, setNativeSelectionTick] = React.useState(0);
-  const restoreTabBarWrapper = React.useCallback(() => {
+  const reconcileTabsHost = React.useCallback(() => {
     NativeScriptRuntime.runOnUI((targetHostId: string) => {
       'worklet';
-      const registry = (globalThis as Record<string, any>)
-        .__rnsNativeScriptTabsRegistry;
-      const controller = registry?.hosts?.[targetHostId]?.controller;
-      const tabBar = controller?.tabBar;
-      if (
-        !tabBar?.superview ||
-        typeof tabBar.superview.bringSubviewToFront !== 'function'
-      ) {
+      const globalObject = globalThis as Record<string, any>;
+      const registry = globalObject.__rnsNativeScriptTabsRegistry;
+      const host = registry?.hosts?.[targetHostId];
+      const controller = host?.controller;
+      if (!controller) {
         return;
       }
-      tabBar.hidden = false;
-      tabBar.alpha = 1;
-      tabBar.userInteractionEnabled = true;
-      if (tabBar.layer) {
-        tabBar.layer.zPosition = 10000;
+      const orderedScreens: any[] = [];
+      let maxIndex = -1;
+      for (let index = 0; index < host.screens.length; index++) {
+        const screen = host.screens[index];
+        if (screen.index > maxIndex) {
+          maxIndex = screen.index;
+        }
       }
-      tabBar.superview.bringSubviewToFront(tabBar);
+      for (let slot = 0; slot <= maxIndex; slot++) {
+        for (let index = 0; index < host.screens.length; index++) {
+          const screen = host.screens[index];
+          if (screen.index === slot) {
+            applyScreenRecordTabItem(screen);
+            orderedScreens[orderedScreens.length] = screen;
+          }
+        }
+      }
+      refreshScreenRecordTabBarItems(orderedScreens);
+      refreshVisibleTabBarItems(controller, orderedScreens);
+      refreshTabBarItemLayout(controller);
+      reconcileSelectedTabControllerView(controller);
     }, hostId).catch(() => undefined);
   }, [hostId]);
   const handleTabSelected = React.useCallback(
     (event: NativeSyntheticEvent<TabSelectedEvent>) => {
-      setNativeSelectionTick(value => (value + 1) % 1000000);
-      restoreTabBarWrapper();
-      setTimeout(restoreTabBarWrapper, 0);
-      setTimeout(restoreTabBarWrapper, 250);
-      setTimeout(restoreTabBarWrapper, 1000);
-      setTimeout(restoreTabBarWrapper, 2000);
+      reconcileTabsHost();
       onTabSelected?.(event);
     },
-    [onTabSelected, restoreTabBarWrapper],
+    [onTabSelected, reconcileTabsHost],
   );
   const children = React.Children.map(props.children, (child, index) => {
     if (!React.isValidElement(child)) {
@@ -1461,45 +1565,11 @@ export function NativeScriptTabsHost(props: TabsHostProps) {
   }
 
   React.useEffect(() => {
-    const applyTabBarLayout = () => {
-      NativeScriptRuntime.runOnUI((targetHostId: string) => {
-        'worklet';
-        const globalObject = globalThis as Record<string, any>;
-        const registry = globalObject.__rnsNativeScriptTabsRegistry;
-        const host = registry?.hosts?.[targetHostId];
-        const controller = host?.controller;
-        if (!controller) {
-          return;
-        }
-        const orderedScreens: any[] = [];
-        let maxIndex = -1;
-        for (let index = 0; index < host.screens.length; index++) {
-          const screen = host.screens[index];
-          if (screen.index > maxIndex) {
-            maxIndex = screen.index;
-          }
-        }
-        for (let slot = 0; slot <= maxIndex; slot++) {
-          for (let index = 0; index < host.screens.length; index++) {
-            const screen = host.screens[index];
-            if (screen.index === slot) {
-              applyScreenRecordTabItem(screen);
-              orderedScreens[orderedScreens.length] = screen;
-            }
-          }
-        }
-        refreshScreenRecordTabBarItems(orderedScreens);
-        refreshVisibleTabBarItems(controller, orderedScreens);
-        refreshTabBarItemLayout(controller);
-        reconcileSelectedTabControllerView(controller);
-      }, hostId).catch(() => undefined);
-    };
-    applyTabBarLayout();
+    reconcileTabsHost();
     const timeouts = [
-      setTimeout(applyTabBarLayout, 0),
-      setTimeout(applyTabBarLayout, 32),
-      setTimeout(applyTabBarLayout, 120),
-      setTimeout(applyTabBarLayout, 250),
+      setTimeout(reconcileTabsHost, 0),
+      setTimeout(reconcileTabsHost, 32),
+      setTimeout(reconcileTabsHost, 120),
     ];
     return () => {
       for (const timeout of timeouts) {
@@ -1507,19 +1577,10 @@ export function NativeScriptTabsHost(props: TabsHostProps) {
       }
     };
   }, [
-    hostId,
-    nativeSelectionTick,
+    reconcileTabsHost,
     props.navStateRequest.baseProvenance,
     props.navStateRequest.selectedScreenKey,
   ]);
-
-  React.useEffect(() => {
-    restoreTabBarWrapper();
-    const interval = setInterval(restoreTabBarWrapper, 250);
-    return () => {
-      clearInterval(interval);
-    };
-  }, [restoreTabBarWrapper]);
 
   return (
     <TabsRuntimeContext.Provider

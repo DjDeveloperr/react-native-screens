@@ -28,7 +28,16 @@ import { isHeaderBarButtonsAvailableForCurrentPlatform } from '../utils';
 import { useTopInsetApplication } from './contexts/TopInsetApplicationContext';
 
 export const ScreenStackHeaderSubview: React.ComponentType<ScreenStackHeaderSubviewNativeProps> =
-  ScreenStackHeaderSubviewNativeComponent;
+  Platform.OS === 'ios'
+    ? React.forwardRef<View, ScreenStackHeaderSubviewNativeProps>(
+        function NativeScriptScreenStackHeaderSubview(
+          { type: _type, ...props },
+          ref,
+        ) {
+          return <View ref={ref} collapsable={false} {...props} />;
+        },
+      )
+    : ScreenStackHeaderSubviewNativeComponent;
 
 export const ScreenStackHeaderConfig = React.forwardRef<
   View,
@@ -114,6 +123,19 @@ export const ScreenStackHeaderConfig = React.forwardRef<
         }
       }
     : undefined;
+
+  if (Platform.OS === 'ios') {
+    return (
+      <View
+        ref={ref}
+        style={styles.headerConfig}
+        pointerEvents="box-none"
+        collapsable={false}
+      >
+        {props.children}
+      </View>
+    );
+  }
 
   return (
     <ScreenStackHeaderConfigNativeComponent

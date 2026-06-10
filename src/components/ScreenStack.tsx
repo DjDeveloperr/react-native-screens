@@ -1,6 +1,7 @@
 'use client';
 
 import React, { PropsWithChildren } from 'react';
+import { Platform } from 'react-native';
 import {
   GestureDetectorBridge,
   ScreensRefsHolder,
@@ -15,6 +16,7 @@ import warnOnce from 'warn-once';
 import ScreenStackNativeComponent, {
   NativeProps,
 } from '../fabric/ScreenStackNativeComponent';
+import { NativeScriptScreenStack } from './native-stack/native-script/NativeScriptScreenStack';
 const assertGHProvider = (
   ScreenGestureDetector: (
     props: PropsWithChildren<GestureProviderProps>,
@@ -91,20 +93,32 @@ function ScreenStack(props: ScreenStackProps) {
         screenEdgeGesture={screenEdgeGesture ?? false}
         screensRefs={screensRefs}
         currentScreenId={currentScreenId}>
-        <ScreenStackNativeComponent
-          {...rest}
-          nativeContainerBackgroundColor={nativeContainerStyle?.backgroundColor}
-          /**
-           * This messy override is to conform NativeProps used by codegen and
-           * our Public API. To see reasoning go to this PR:
-           * https://github.com/software-mansion/react-native-screens/pull/2423#discussion_r1810616995
-           */
-          onFinishTransitioning={
-            onFinishTransitioning as NativeProps['onFinishTransitioning']
-          }
-          ref={ref}>
-          {children}
-        </ScreenStackNativeComponent>
+        {Platform.OS === 'ios' ? (
+          <NativeScriptScreenStack
+            {...rest}
+            nativeContainerStyle={nativeContainerStyle}
+            onFinishTransitioning={onFinishTransitioning}
+            ref={ref}>
+            {children}
+          </NativeScriptScreenStack>
+        ) : (
+          <ScreenStackNativeComponent
+            {...rest}
+            nativeContainerBackgroundColor={
+              nativeContainerStyle?.backgroundColor
+            }
+            /**
+             * This messy override is to conform NativeProps used by codegen and
+             * our Public API. To see reasoning go to this PR:
+             * https://github.com/software-mansion/react-native-screens/pull/2423#discussion_r1810616995
+             */
+            onFinishTransitioning={
+              onFinishTransitioning as NativeProps['onFinishTransitioning']
+            }
+            ref={ref}>
+            {children}
+          </ScreenStackNativeComponent>
+        )}
       </ScreenGestureDetector>
     </RNSScreensRefContext.Provider>
   );

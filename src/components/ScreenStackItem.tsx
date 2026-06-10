@@ -3,8 +3,8 @@ import {
   Platform,
   type StyleProp,
   StyleSheet,
+  type View,
   type ViewStyle,
-  View,
 } from 'react-native';
 import warnOnce from 'warn-once';
 
@@ -17,6 +17,7 @@ import {
 import { ScreenStackHeaderConfig } from './ScreenStackHeaderConfig';
 import Screen from './Screen';
 import ScreenStack from './ScreenStack';
+import { NativeScriptScreenStackItem } from './native-stack/native-script/NativeScriptScreenStack';
 import { RNSScreensRefContext } from '../contexts';
 import { FooterComponent } from './ScreenFooter';
 import { SafeAreaViewProps } from './safe-area/SafeAreaView.types';
@@ -69,6 +70,29 @@ function ScreenStackItem(
 
   React.useImperativeHandle(ref, () => currentScreenRef.current!);
 
+  const setCurrentScreenRef = React.useCallback(
+    (node: View | null) => {
+      currentScreenRef.current = node;
+
+      if (screenRefs === null) {
+        console.warn(
+          'Looks like RNSScreensRefContext is missing. Make sure the ScreenStack component is wrapped in it',
+        );
+        return;
+      }
+
+      const currentRefs = screenRefs.current;
+
+      if (node === null) {
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+        delete currentRefs[screenId];
+      } else {
+        currentRefs[screenId] = { current: node };
+      }
+    },
+    [screenId, screenRefs],
+  );
+
   const stackPresentationWithDefault = stackPresentation ?? 'push';
   const headerConfigHiddenWithDefault = headerConfig?.hidden ?? false;
 
@@ -97,6 +121,7 @@ function ScreenStackItem(
   const hasBlurEffect =
     headerConfig?.blurEffect !== undefined &&
     headerConfig.blurEffect !== 'none';
+  const shouldUseNativeScriptStack = Platform.OS === 'ios';
 
   warnOnce(
     hasEdgeEffects && hasBlurEffect && isIOS26OrHigher,
@@ -160,27 +185,27 @@ function ScreenStackItem(
     </>
   );
 
+  if (shouldUseNativeScriptStack) {
+    return (
+      <NativeScriptScreenStackItem
+        ref={setCurrentScreenRef}
+        activityState={activityState}
+        contentStyle={contentStyle}
+        headerConfig={headerConfig}
+        onHeaderHeightChange={isHeaderInModal ? undefined : onHeaderHeightChange}
+        screenId={screenId}
+        shouldFreeze={shouldFreeze}
+        stackPresentation={stackPresentationWithDefault}
+        style={[style, internalScreenStyle]}
+        {...rest}>
+        {content}
+      </NativeScriptScreenStackItem>
+    );
+  }
+
   return (
     <Screen
-      ref={node => {
-        currentScreenRef.current = node;
-
-        if (screenRefs === null) {
-          console.warn(
-            'Looks like RNSScreensRefContext is missing. Make sure the ScreenStack component is wrapped in it',
-          );
-          return;
-        }
-
-        const currentRefs = screenRefs.current;
-
-        if (node === null) {
-          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-          delete currentRefs[screenId];
-        } else {
-          currentRefs[screenId] = { current: node };
-        }
-      }}
+      ref={setCurrentScreenRef}
       enabled
       isNativeStack
       activityState={activityState}

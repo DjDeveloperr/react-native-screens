@@ -17,10 +17,20 @@ function __resetDefinitions() {
   definitions.length = 0;
 }
 
+function runOnUI(fn, ...args) {
+  return Promise.resolve(fn(...args));
+}
+
 module.exports = {
   __esModule: true,
-  default: {defineUIViewController, __getDefinitions, __resetDefinitions},
+  default: {
+    defineUIViewController,
+    __getDefinitions,
+    __resetDefinitions,
+    runOnUI,
+  },
   __getDefinitions,
   __resetDefinitions,
   defineUIViewController,
+  runOnUI,
 };

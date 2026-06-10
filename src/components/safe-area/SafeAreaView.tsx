@@ -7,9 +7,19 @@ import { SafeAreaViewProps } from './SafeAreaView.types';
 import SafeAreaViewNativeComponent, {
   NativeProps as SafeAreaViewNativeComponentProps,
 } from '../../fabric/safe-area/SafeAreaViewNativeComponent';
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 
 export function SafeAreaView(props: SafeAreaViewProps) {
+  if (Platform.OS === 'ios') {
+    return (
+      <View
+        {...props}
+        style={[styles.flex, props.style]}
+        collapsable={false}
+      />
+    );
+  }
+
   return (
     <SafeAreaViewNativeComponent
       {...props}
