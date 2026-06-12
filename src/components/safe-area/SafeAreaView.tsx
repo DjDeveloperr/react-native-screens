@@ -11,12 +11,14 @@ import { Platform, StyleSheet, View } from 'react-native';
 
 export function SafeAreaView(props: SafeAreaViewProps) {
   if (Platform.OS === 'ios') {
+    // NATIVESCRIPT_PORT_DEVIATION: upstream iOS uses ObjC/Fabric
+    // RNSSafeAreaView, while this fork disables that native implementation and
+    // keeps iOS here as a normal React Native view.
+    // The iOS 26 screen wrapper shape is still preserved for content-wrapper
+    // scroll-view discovery; introducing native padding here would duplicate
+    // UIKit navigation-controller layout and regress under-header content.
     return (
-      <View
-        {...props}
-        style={[styles.flex, props.style]}
-        collapsable={false}
-      />
+      <View {...props} style={[styles.flex, props.style]} collapsable={false} />
     );
   }
 

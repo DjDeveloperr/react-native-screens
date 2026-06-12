@@ -16,5 +16,9 @@ module.exports = {
     '^react-native-screens/(.*)$': '<rootDir>/src/$1',
   },
   modulePathIgnorePatterns: ['FabricExample'],
-  testPathIgnorePatterns: ['/node_modules/', '<rootDir>/react-navigation/'],
+  testPathIgnorePatterns: [
+    '/node_modules/',
+    '<rootDir>/lib/',
+    '<rootDir>/react-navigation/',
+  ],
 };

@@ -17,7 +17,10 @@ import {
 import { ScreenStackHeaderConfig } from './ScreenStackHeaderConfig';
 import Screen from './Screen';
 import ScreenStack from './ScreenStack';
-import { NativeScriptScreenStackItem } from './native-stack/native-script/NativeScriptScreenStack';
+import {
+  NativeScriptScreenStack,
+  NativeScriptScreenStackItem,
+} from './native-stack/native-script/NativeScriptScreenStack';
 import { RNSScreensRefContext } from '../contexts';
 import { FooterComponent } from './ScreenFooter';
 import { SafeAreaViewProps } from './safe-area/SafeAreaView.types';
@@ -186,15 +189,57 @@ function ScreenStackItem(
   );
 
   if (shouldUseNativeScriptStack) {
+    if (isHeaderInModal) {
+      // NATIVESCRIPT_PORT_DEVIATION: upstream's inner modal Screen does not need
+      // an explicit JS screenId because the native RNSScreen instance owns its
+      // identity. The NativeScript host registry needs a stable key for every
+      // TS-created controller, so derive one from the outer route while keeping
+      // the outer-presented-screen plus inner-stack UIKit shape intact.
+      const modalHeaderScreenId = `${screenId}:modal-header`;
+
+      return (
+        <NativeScriptScreenStackItem
+          ref={setCurrentScreenRef}
+          activityState={activityState}
+          headerConfig={undefined}
+          onHeaderHeightChange={undefined}
+          screenId={screenId}
+          scrollEdgeEffects={undefined}
+          shouldFreeze={shouldFreeze}
+          sheetAllowedDetents={sheetAllowedDetents}
+          stackPresentation={stackPresentationWithDefault}
+          style={[style, internalScreenStyle]}
+          {...rest}>
+          <NativeScriptScreenStack style={styles.container}>
+            <NativeScriptScreenStackItem
+              activityState={activityState}
+              headerConfig={headerConfig}
+              onHeaderHeightChange={onHeaderHeightChange}
+              screenId={modalHeaderScreenId}
+              scrollEdgeEffects={scrollEdgeEffects}
+              shouldFreeze={shouldFreeze}
+              stackPresentation="push"
+              style={StyleSheet.absoluteFill}>
+              {content}
+            </NativeScriptScreenStackItem>
+          </NativeScriptScreenStack>
+        </NativeScriptScreenStackItem>
+      );
+    }
+
     return (
       <NativeScriptScreenStackItem
         ref={setCurrentScreenRef}
         activityState={activityState}
         contentStyle={contentStyle}
         headerConfig={headerConfig}
-        onHeaderHeightChange={isHeaderInModal ? undefined : onHeaderHeightChange}
+        scrollEdgeEffects={isHeaderInModal ? undefined : scrollEdgeEffects}
+        onHeaderHeightChange={
+          isHeaderInModal ? undefined : onHeaderHeightChange
+        }
         screenId={screenId}
         shouldFreeze={shouldFreeze}
+        sheetAllowedDetents={sheetAllowedDetents}
         stackPresentation={stackPresentationWithDefault}
         style={[style, internalScreenStyle]}
         {...rest}>

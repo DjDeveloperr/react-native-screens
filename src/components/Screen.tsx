@@ -30,6 +30,7 @@ import {
 } from './helpers/sheet';
 import { parseBooleanToOptionalBooleanNativeProp } from '../utils';
 import featureFlags from '../flags';
+import { NativeScriptScreen } from './native-stack/native-script/NativeScriptScreenStack';
 
 type NativeProps = ScreenNativeComponentProps | ModalScreenNativeComponentProps;
 const AnimatedNativeScreen = Animated.createAnimatedComponent(
@@ -200,6 +201,63 @@ export const InnerScreen = React.forwardRef<View, ScreenProps>(
       const freeze =
         freezeOnBlur &&
         (shouldFreeze !== undefined ? shouldFreeze : activityState === 0);
+
+      if (Platform.OS === 'ios') {
+        return (
+          <DelayedFreeze freeze={freeze}>
+            <NativeScriptScreen
+              {...props}
+              onAppear={onAppear}
+              onDisappear={onDisappear}
+              onWillAppear={onWillAppear}
+              onWillDisappear={onWillDisappear}
+              onGestureCancel={
+                onGestureCancel ??
+                (() => {
+                  // for internal use
+                })
+              }
+              style={[style, { zIndex: undefined }]}
+              activityState={activityState}
+              screenId={screenId}
+              sheetAllowedDetents={resolvedSheetAllowedDetents}
+              sheetLargestUndimmedDetentIndex={
+                resolvedSheetLargestUndimmedDetent
+              }
+              sheetElevation={sheetElevation}
+              sheetShouldOverflowTopInset={sheetShouldOverflowTopInset}
+              sheetDefaultResizeAnimationEnabled={
+                sheetDefaultResizeAnimationEnabled
+              }
+              sheetGrabberVisible={sheetGrabberVisible}
+              sheetCornerRadius={sheetCornerRadius}
+              sheetExpandsWhenScrolledToEdge={sheetExpandsWhenScrolledToEdge}
+              sheetInitialDetentIndex={resolvedSheetInitialDetentIndex}
+              fullScreenSwipeEnabled={fullScreenSwipeEnabled}
+              gestureResponseDistance={{
+                start: gestureResponseDistance?.start ?? -1,
+                end: gestureResponseDistance?.end ?? -1,
+                top: gestureResponseDistance?.top ?? -1,
+                bottom: gestureResponseDistance?.bottom ?? -1,
+              }}
+              ref={handleRef}
+              scrollEdgeEffects={scrollEdgeEffects}>
+              {!isNativeStack ? (
+                children
+              ) : (
+                <TransitionProgressContext.Provider
+                  value={{
+                    progress,
+                    closing,
+                    goingForward,
+                  }}>
+                  {children}
+                </TransitionProgressContext.Provider>
+              )}
+            </NativeScriptScreen>
+          </DelayedFreeze>
+        );
+      }
 
       return (
         <DelayedFreeze freeze={freeze}>

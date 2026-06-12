@@ -7,17 +7,20 @@ import { isNativePlatformSupported, screensEnabled } from '../core';
 
 // Native components
 import ScreenContainerNativeComponent from '../fabric/ScreenContainerNativeComponent';
-import ScreenNavigationContainerNativeComponent from '../fabric/ScreenNavigationContainerNativeComponent';
+import { NativeScriptScreenContainer } from './native-stack/native-script/NativeScriptScreenStack';
 
 function ScreenContainer(props: ScreenContainerProps) {
   const { enabled = screensEnabled(), hasTwoStates, ...rest } = props;
 
   if (enabled && isNativePlatformSupported) {
+    if (Platform.OS === 'ios') {
+      return (
+        <NativeScriptScreenContainer hasTwoStates={hasTwoStates} {...rest} />
+      );
+    }
+
     if (hasTwoStates) {
-      const ScreenNavigationContainer =
-        Platform.OS === 'ios'
-          ? ScreenNavigationContainerNativeComponent
-          : ScreenContainerNativeComponent;
+      const ScreenNavigationContainer = ScreenContainerNativeComponent;
       return <ScreenNavigationContainer {...rest} />;
     }
     return <ScreenContainerNativeComponent {...rest} />;
