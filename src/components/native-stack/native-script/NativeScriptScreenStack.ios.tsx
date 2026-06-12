@@ -46,6 +46,7 @@ const SCREEN_ID_SEPARATOR = '\u001f';
 const SHEET_FIT_TO_CONTENTS = -1;
 const SHEET_LARGEST_UNDIMMED_DETENT_NONE = -1;
 const SCREEN_CONTROLLER_CLASS_KEY = '__rnsNativeScriptScreenControllerClass';
+const SCREEN_VIEW_CLASS_KEY = '__rnsNativeScriptScreenViewClass';
 const SCREEN_CONTAINER_CONTROLLER_CLASS_KEY =
   '__rnsNativeScriptScreenContainerControllerClass';
 const NAVIGATION_CONTROLLER_CLASS_KEY =
@@ -450,7 +451,12 @@ function nativeValue(name: string) {
   const globalObject = globalThis as Record<string, any>;
   const api = globalObject.__nativeScriptNativeApi;
 
-  return api?.[name] ?? globalObject[name];
+  return (
+    api?.[name] ??
+    globalObject[name] ??
+    api?.getClass?.(name) ??
+    globalObject.NativeScript?.getClass?.(name)
+  );
 }
 
 function nativeProtocol(name: string) {
@@ -1836,6 +1842,50 @@ function updateFormSheetPresentationStyle(
   }
 }
 
+function refreshScreenViewSurfaceTouchHandler(view: any) {
+  'worklet';
+
+  if (typeof view?.refreshSurfaceTouchHandler === 'function') {
+    view.refreshSurfaceTouchHandler();
+  }
+}
+
+function refreshScreenContentWrapperHost(
+  screenId: string | undefined,
+  registry: NativeScriptStackRegistry,
+) {
+  'worklet';
+
+  if (!screenId) {
+    return;
+  }
+
+  const contentWrapperView = registry.screenContentWrapperViews[screenId];
+
+  if (!contentWrapperView) {
+    return;
+  }
+
+  // NATIVESCRIPT_PORT_DEVIATION: upstream RNSScreenContentWrapper is a native
+  // component view under the same UIKit hit-test tree after modal
+  // presentation. NativeScript hosts React children in a detached children
+  // view with its own RCTSurfaceTouchHandler, so UIKit modal moves must
+  // refresh that exact touch host even when React layout frames are unchanged.
+  refreshScreenViewSurfaceTouchHandler(registry.screens[screenId]?.view);
+  contentWrapperView.userInteractionEnabled = true;
+  NativeScriptRuntime.refreshUIKitHostView(contentWrapperView);
+}
+
+function refreshRegisteredScreenContentWrapperHosts(
+  registry: NativeScriptStackRegistry,
+) {
+  'worklet';
+
+  for (const screenId in registry.screenContentWrapperViews) {
+    refreshScreenContentWrapperHost(screenId, registry);
+  }
+}
+
 export function notifyNativeScriptScreenContentWrapperFrame(
   screenId: string | undefined,
   frame: any,
@@ -1866,6 +1916,8 @@ export function notifyNativeScriptScreenContentWrapperFrame(
   registry.screenContentWrapperViews[screenId] = contentWrapperView;
   registry.screenContentReady[screenId] = true;
 
+  refreshScreenContentWrapperHost(screenId, registry);
+
   if (!wasContentReady && stackId && stackCtx) {
     const reconcileStackFromRegistry = (globalThis as Record<string, any>)[
       RECONCILE_STACK_KEY
@@ -1894,6 +1946,40 @@ export function notifyNativeScriptScreenContentWrapperFrame(
   // Upstream RNSScreenContentWrapper reports React layout frame changes to
   // RNSScreen so formSheet `fitToContents` can update allowed detents.
   updateFitToContentsDetent(targetController, props, registry, true);
+}
+
+export function notifyNativeScriptScreenContentWrapperHostReady(
+  screenId: string | undefined,
+  contentWrapperViewHandle: string | undefined,
+) {
+  if (!screenId || !contentWrapperViewHandle) {
+    return Promise.resolve(false);
+  }
+
+  return (NativeScriptRuntime as any).runOnUI(
+    (readyScreenId: string, readyContentWrapperViewHandle: string) => {
+      'worklet';
+      const refreshByHandle = (NativeScriptRuntime as any)
+        .refreshUIKitHostViewHandle;
+      const didRefresh =
+        typeof refreshByHandle === 'function' &&
+        refreshByHandle(readyContentWrapperViewHandle) === true;
+      const registry = getRegistry(globalThis as Record<string, any>);
+
+      registry.screenContentReady[readyScreenId] = true;
+
+      const stackId = registry.screenParents[readyScreenId];
+      const ctx = stackId ? registry.stackContexts[stackId] : undefined;
+
+      if (stackId && ctx) {
+        scheduledReconcileStack(stackId, registry, ctx, true);
+      }
+
+      return didRefresh;
+    },
+    screenId,
+    contentWrapperViewHandle,
+  );
 }
 
 function flexibleSizeMask() {
@@ -1945,6 +2031,26 @@ function contentWrapperChildScrollViewAndContainer(contentWrapperView: any) {
         contentContainerView: maybeSafeAreaView,
         scrollViewComponent: subview,
       };
+    }
+
+    if (subview?.__rnsNativeScriptSafeAreaContentView === true) {
+      const safeAreaContentSubviews = subview.subviews;
+      const safeAreaContentCount = arrayCount(safeAreaContentSubviews);
+
+      for (
+        let contentIndex = 0;
+        contentIndex < safeAreaContentCount;
+        contentIndex += 1
+      ) {
+        const contentSubview = arrayItem(safeAreaContentSubviews, contentIndex);
+
+        if (isNativeScrollView(contentSubview)) {
+          return {
+            contentContainerView: subview,
+            scrollViewComponent: contentSubview,
+          };
+        }
+      }
     }
   }
 
@@ -2263,6 +2369,25 @@ function rectWithWidth(rect: any, width: number) {
   };
 }
 
+function rectWithHeight(rect: any, height: number) {
+  'worklet';
+  const origin = rect?.origin;
+  const size = rect?.size;
+  const CGRectMake = nativeValue('CGRectMake');
+  const x = origin?.x ?? 0;
+  const y = origin?.y ?? 0;
+  const width = size?.width ?? 0;
+
+  if (typeof CGRectMake === 'function') {
+    return CGRectMake(x, y, width, height);
+  }
+
+  return {
+    origin: { x, y },
+    size: { height, width },
+  };
+}
+
 function sizeWithWidth(size: any, width: number) {
   'worklet';
   const CGSizeMake = nativeValue('CGSizeMake');
@@ -2302,16 +2427,111 @@ function shouldFillHostedSubview(rootView: any, subview: any, depth: number) {
       Math.abs(childWidth - parentWidth) < 2 ||
       (hasChildSubviews &&
         contentWidth >= parentWidth - 2 &&
-        childWidth < parentWidth - 2))
+        childWidth < parentWidth - 2) ||
+      // UIKit can leave full-origin RN host wrappers with a stale transformed
+      // presentation size after an interactive gesture. Leaf user layout keeps
+      // non-zero origins, but these host wrappers should keep filling the
+      // actual parent bounds so scroll views do not swallow Pressable hits.
+      (hasChildSubviews && childWidth > parentWidth + 2))
   );
+}
+
+function hostedSubviewMaxVisibleChildBottom(view: any) {
+  'worklet';
+
+  const subviews = view?.subviews;
+  const count = arrayCount(subviews);
+  let maxBottom = 0;
+
+  for (let index = 0; index < count; index += 1) {
+    const subview = arrayItem(subviews, index);
+
+    if (!subview || subview.hidden === true || (subview.alpha ?? 1) <= 0.01) {
+      continue;
+    }
+
+    const frame = subview.frame;
+    const height = frame?.size?.height ?? 0;
+
+    if (height <= 0) {
+      continue;
+    }
+
+    const bottom = (frame?.origin?.y ?? 0) + height;
+
+    if (bottom > maxBottom) {
+      maxBottom = bottom;
+    }
+  }
+
+  return maxBottom;
+}
+
+function hostedSubviewChildBoundsRepairHeight(view: any) {
+  'worklet';
+
+  if (!view || isNativeScrollView(view)) {
+    return 0;
+  }
+
+  const frame = view.frame;
+  const bounds = view.bounds ?? frame;
+  const parentBounds = view.superview?.bounds;
+  const parentWidth = parentBounds?.size?.width ?? 0;
+  const parentHeight = parentBounds?.size?.height ?? 0;
+  const width = frame?.size?.width ?? bounds?.size?.width ?? 0;
+  const height = frame?.size?.height ?? bounds?.size?.height ?? 0;
+  const originX = frame?.origin?.x ?? 0;
+  const originY = frame?.origin?.y ?? 0;
+  const maxBottom = hostedSubviewMaxVisibleChildBottom(view);
+  const repairedHeight =
+    parentHeight > 0 && maxBottom > parentHeight ? parentHeight : maxBottom;
+
+  if (
+    parentWidth <= 0 ||
+    width <= 0 ||
+    height <= 0 ||
+    Math.abs(originX) >= 1 ||
+    Math.abs(originY) >= 1 ||
+    Math.abs(width - parentWidth) >= 2 ||
+    repairedHeight <= height + 2
+  ) {
+    return 0;
+  }
+
+  return repairedHeight;
+}
+
+function repairHostedSubviewHeightForChildren(view: any) {
+  'worklet';
+
+  const height = hostedSubviewChildBoundsRepairHeight(view);
+
+  if (height <= 0) {
+    return false;
+  }
+
+  // NATIVESCRIPT_PORT_DEVIATION: upstream RNSScreenContentWrapper is a native
+  // UIKit/Fabric component whose ancestors already have coherent bounds during
+  // modal and interactive-pop transitions. The TS port manually refreshes a
+  // hosted RN subtree, so repair only full-width host wrappers whose visible
+  // children extend past a stale transformed height; otherwise UIKit hit-testing
+  // stops at the parent and Pressables below that stale bound never receive
+  // touches.
+  view.frame = rectWithHeight(view.frame, height);
+  view.bounds = rectWithHeight(view.bounds ?? view.frame, height);
+
+  return true;
 }
 
 function layoutHostedSubviewChain(rootView: any, depth: number) {
   'worklet';
 
-  if (!rootView || depth > 8) {
+  if (!rootView || depth > 16) {
     return;
   }
+
+  repairHostedSubviewHeightForChildren(rootView);
 
   const isScrollView = isNativeScrollView(rootView);
   const scrollWidth = isScrollView ? rootView.bounds?.size?.width ?? 0 : 0;
@@ -2374,6 +2594,7 @@ function layoutHostedReactSubviews(controller: any) {
     return;
   }
 
+  refreshScreenViewSurfaceTouchHandler(rootView);
   rootView.userInteractionEnabled = true;
   NativeScriptRuntime.refreshUIKitHostView(rootView);
 
@@ -2390,6 +2611,50 @@ function layoutHostedReactSubviews(controller: any) {
     subview.frame = rootView.bounds;
     subview.autoresizingMask = flexibleSizeMask();
     layoutHostedSubviewChain(subview, 0);
+  }
+}
+
+function layoutHostedReactSubviewsForControllerHierarchy(
+  controller: any,
+  depth = 0,
+) {
+  'worklet';
+
+  if (!controller || depth > 16) {
+    return;
+  }
+
+  layoutHostedReactSubviews(controller);
+
+  const viewControllers = controller.viewControllers;
+  const viewControllerCount = arrayCount(viewControllers);
+
+  for (let index = 0; index < viewControllerCount; index += 1) {
+    const child = arrayItem(viewControllers, index);
+
+    if (child && child !== controller) {
+      layoutHostedReactSubviewsForControllerHierarchy(child, depth + 1);
+    }
+  }
+
+  const childViewControllers = controller.childViewControllers;
+  const childViewControllerCount = arrayCount(childViewControllers);
+
+  for (let index = 0; index < childViewControllerCount; index += 1) {
+    const child = arrayItem(childViewControllers, index);
+
+    if (child && child !== controller) {
+      layoutHostedReactSubviewsForControllerHierarchy(child, depth + 1);
+    }
+  }
+
+  const presentedController = controller.presentedViewController;
+
+  if (presentedController && presentedController !== controller) {
+    layoutHostedReactSubviewsForControllerHierarchy(
+      presentedController,
+      depth + 1,
+    );
   }
 }
 
@@ -2414,7 +2679,8 @@ function refreshNavigationControllerHostedViews(navigationController: any) {
     }
 
     controller.view.userInteractionEnabled = true;
-    layoutHostedReactSubviews(controller);
+    refreshScreenViewSurfaceTouchHandler(controller.view);
+    layoutHostedReactSubviewsForControllerHierarchy(controller);
   }
 }
 
@@ -2470,7 +2736,7 @@ function layoutNavigationStackViews(navigationController: any) {
 
     controller.view.frame = navigationController.view.bounds;
     controller.view.autoresizingMask = flexibleSizeMask();
-    layoutHostedReactSubviews(controller);
+    layoutHostedReactSubviewsForControllerHierarchy(controller);
   }
 
   refreshNavigationControllerHostedViews(navigationController);
@@ -2498,15 +2764,22 @@ function layoutPresentedModalControllers(
       continue;
     }
 
-    const correctFrame = controller.view.superview?.frame ?? fallbackBounds;
+    // Upstream lets UIKit own presented controller view layout. The TS port
+    // refreshes hosted RN content manually; use the superview's bounds, not its
+    // frame, so transformed sheet/presentation containers do not leak their
+    // outer coordinate-space size into React hit targets after gestures.
+    const correctFrame = controller.view.superview?.bounds ?? fallbackBounds;
 
     if (correctFrame) {
       controller.view.frame = correctFrame;
     }
 
     controller.view.autoresizingMask = flexibleSizeMask();
-    layoutHostedReactSubviews(controller);
+    layoutHostedReactSubviewsForControllerHierarchy(controller);
+    refreshScreenContentWrapperHost(modalId, registry);
   }
+
+  refreshRegisteredScreenContentWrapperHosts(registry);
 }
 
 function configureHeaderBackButton(
@@ -3905,7 +4178,7 @@ function emitTopScreenHeaderHeightAfterNavigationLayout(
     return;
   }
 
-  layoutHostedReactSubviews(topController);
+  layoutHostedReactSubviewsForControllerHierarchy(topController);
 
   if (
     screenControllerHasNestedNavigationStack(topController) ||
@@ -3983,7 +4256,8 @@ function updateScreenBoundsAfterLayout(controller: any) {
   }
 
   if (screenControllerShouldUpdateBoundsAfterLayout(controller, props)) {
-    layoutHostedReactSubviews(controller);
+    layoutHostedReactSubviewsForControllerHierarchy(controller);
+    refreshScreenContentWrapperHost(screenId, registry);
   }
 }
 
@@ -4053,19 +4327,585 @@ function controllersEqual(left: any, right: any) {
 function nativeObjectsEqual(left: any, right: any) {
   'worklet';
 
-  if (!left || !right) {
-    return false;
-  }
-
   if (left === right) {
     return true;
   }
 
-  if (typeof left.isEqual === 'function' && left.isEqual(right)) {
+  if (!left || !right) {
+    return false;
+  }
+
+  if (typeof left.isEqual === 'function') {
+    try {
+      if (left.isEqual(right) === true) {
+        return true;
+      }
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  if (typeof right.isEqual === 'function') {
+    try {
+      return right.isEqual(left) === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function postSafeAreaDidChangeNotification(view: any) {
+  'worklet';
+  const NSNotificationCenter = nativeValue('NSNotificationCenter');
+  const defaultCenter = NSNotificationCenter?.defaultCenter;
+  const center =
+    typeof defaultCenter === 'function' ? defaultCenter() : defaultCenter;
+
+  if (typeof center?.postNotificationNameObjectUserInfo === 'function') {
+    center.postNotificationNameObjectUserInfo(
+      'RNSSafeAreaDidChange',
+      view,
+      null,
+    );
+  } else if (typeof center?.postNotificationNameObject === 'function') {
+    center.postNotificationNameObject('RNSSafeAreaDidChange', view);
+  }
+}
+
+function nativeObjectDescription(value: any) {
+  'worklet';
+
+  if (!value) {
+    return '';
+  }
+
+  const description = value.description;
+
+  if (typeof description === 'function') {
+    try {
+      return String(description.call(value));
+    } catch (_error) {
+      return '';
+    }
+  }
+
+  if (description != null) {
+    return String(description);
+  }
+
+  try {
+    return String(value);
+  } catch (_error) {
+    return '';
+  }
+}
+
+function isSurfaceTouchHandlerGestureRecognizer(
+  gestureRecognizer: any,
+  RCTSurfaceTouchHandler?: any,
+) {
+  'worklet';
+
+  if (!gestureRecognizer) {
+    return false;
+  }
+
+  const SurfaceTouchHandler =
+    RCTSurfaceTouchHandler ?? nativeValue('RCTSurfaceTouchHandler');
+
+  if (
+    SurfaceTouchHandler &&
+    typeof gestureRecognizer.isKindOfClass === 'function'
+  ) {
+    try {
+      if (gestureRecognizer.isKindOfClass(SurfaceTouchHandler) === true) {
+        return true;
+      }
+    } catch (_error) {
+      // NATIVESCRIPT_PORT_DEVIATION: upstream calls an ObjC category that
+      // already knows about RCTSurfaceTouchHandler. The TypeScript port may
+      // see a runtime class wrapper shape that `isKindOfClass:` cannot accept,
+      // so keep the fallback generic instead of adding a library-specific
+      // TurboModule helper.
+    }
+  }
+
+  return nativeObjectDescription(gestureRecognizer).includes(
+    'RCTSurfaceTouchHandler',
+  );
+}
+
+function nativeScriptScreenOrReactRootView(
+  view: any,
+  RCTRootComponentView?: any,
+  RCTSurfaceView?: any,
+) {
+  'worklet';
+
+  if (!view) {
+    return false;
+  }
+
+  const RootComponentView =
+    RCTRootComponentView ?? nativeValue('RCTRootComponentView');
+  const SurfaceView = RCTSurfaceView ?? nativeValue('RCTSurfaceView');
+
+  if (view.__rnsNativeScriptScreenView === true) {
     return true;
   }
 
-  return typeof right.isEqual === 'function' && right.isEqual(left);
+  if (typeof view.isKindOfClass === 'function') {
+    try {
+      if (
+        (RootComponentView && view.isKindOfClass(RootComponentView) === true) ||
+        (SurfaceView && view.isKindOfClass(SurfaceView) === true)
+      ) {
+        return true;
+      }
+    } catch (_error) {
+      // Some NativeScript class wrappers are not stable ObjC Class objects
+      // across runtimes; fall through to the native description below.
+    }
+  }
+
+  const description = nativeObjectDescription(view);
+
+  return (
+    description.includes('RNSScreenNativeScriptView') ||
+    description.includes('RCTRootComponentView') ||
+    description.includes('RCTSurfaceView')
+  );
+}
+
+function surfaceTouchHandlersForView(view: any, RCTSurfaceTouchHandler?: any) {
+  'worklet';
+
+  const SurfaceTouchHandler =
+    RCTSurfaceTouchHandler ?? nativeValue('RCTSurfaceTouchHandler');
+  const handlers: any[] = [];
+  const gestureRecognizers = view?.gestureRecognizers;
+  const gestureRecognizerCount = arrayCount(gestureRecognizers);
+
+  for (let index = 0; index < gestureRecognizerCount; index += 1) {
+    const gestureRecognizer = arrayItem(gestureRecognizers, index);
+
+    if (
+      isSurfaceTouchHandlerGestureRecognizer(
+        gestureRecognizer,
+        SurfaceTouchHandler,
+      )
+    ) {
+      handlers.push(gestureRecognizer);
+    }
+  }
+
+  return handlers;
+}
+
+function gestureRecognizerAttachedView(gestureRecognizer: any) {
+  'worklet';
+
+  try {
+    return gestureRecognizer?.view ?? null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+function viewHasGestureRecognizer(view: any, gestureRecognizer: any) {
+  'worklet';
+
+  if (!view || !gestureRecognizer) {
+    return false;
+  }
+
+  const gestureRecognizers = view.gestureRecognizers;
+  const count = arrayCount(gestureRecognizers);
+
+  for (let index = 0; index < count; index += 1) {
+    if (
+      nativeObjectsEqual(
+        arrayItem(gestureRecognizers, index),
+        gestureRecognizer,
+      )
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function surfaceTouchHandlerIsAttachedToView(handler: any, view: any) {
+  'worklet';
+
+  const attachedView = gestureRecognizerAttachedView(handler);
+
+  if (attachedView) {
+    return nativeObjectsEqual(attachedView, view);
+  }
+
+  return viewHasGestureRecognizer(view, handler);
+}
+
+function detachSurfaceTouchHandlerFromView(handler: any, view: any) {
+  'worklet';
+
+  if (
+    !handler ||
+    !view ||
+    !surfaceTouchHandlerIsAttachedToView(handler, view)
+  ) {
+    return false;
+  }
+
+  handler.detachFromView?.(view);
+
+  return true;
+}
+
+function detachSurfaceTouchHandlersFromView(view: any, keepHandler?: any) {
+  'worklet';
+
+  const handlers = surfaceTouchHandlersForView(view);
+
+  for (const handler of handlers) {
+    if (keepHandler && nativeObjectsEqual(handler, keepHandler)) {
+      continue;
+    }
+
+    detachSurfaceTouchHandlerFromView(handler, view);
+  }
+
+  return handlers;
+}
+
+function updateSurfaceTouchHandlerOriginForView(view: any, handler: any) {
+  'worklet';
+
+  if (!view || !handler) {
+    return;
+  }
+
+  let origin = { x: 0, y: 0 };
+
+  if (view.window && typeof view.convertPointToView === 'function') {
+    try {
+      origin = view.convertPointToView({ x: 0, y: 0 }, view.window);
+    } catch (_error) {
+      origin = { x: 0, y: 0 };
+    }
+  }
+
+  try {
+    handler.viewOriginOffset = origin;
+  } catch (_error) {
+    // Older React Native builds may not expose viewOriginOffset to JS. Keeping
+    // this best-effort preserves the generic UIKit host contract without a
+    // react-native-screens-specific native helper.
+  }
+}
+
+export const __nativeScriptSurfaceTouchHandlersForTests =
+  surfaceTouchHandlersForView;
+export const __nativeScriptDetachSurfaceTouchHandlersForTests =
+  detachSurfaceTouchHandlersFromView;
+export const __nativeScriptUpdateSurfaceTouchHandlerOriginForTests =
+  updateSurfaceTouchHandlerOriginForView;
+export const __nativeScriptSurfaceTouchHandlerAttachedToViewForTests =
+  surfaceTouchHandlerIsAttachedToView;
+export const __nativeScriptDetachSurfaceTouchHandlerFromViewForTests =
+  detachSurfaceTouchHandlerFromView;
+export const __nativeScriptHostedSubviewChildBoundsRepairHeightForTests =
+  hostedSubviewChildBoundsRepairHeight;
+export const __nativeScriptRepairHostedSubviewHeightForTests =
+  repairHostedSubviewHeightForChildren;
+
+function nativeScriptScreenViewClass() {
+  'worklet';
+  const globalObject = globalThis as Record<string, any>;
+  const existing = globalObject[SCREEN_VIEW_CLASS_KEY];
+
+  if (existing) {
+    return existing;
+  }
+
+  const UIView = nativeValue('UIView');
+  const NativeClassFunction = globalObject.NativeClass;
+
+  if (!UIView || typeof NativeClassFunction !== 'function') {
+    return UIView;
+  }
+
+  class RNSScreenNativeScriptView extends UIView {
+    didMoveToWindow() {
+      'worklet';
+
+      this.super?.didMoveToWindow?.();
+      this.refreshSurfaceTouchHandler();
+      this.dispatchSafeAreaDidChangeNotification();
+    }
+
+    isMountedUnderScreenOrReactRoot() {
+      'worklet';
+
+      const RCTRootComponentView = nativeValue('RCTRootComponentView');
+      const RCTSurfaceView = nativeValue('RCTSurfaceView');
+      let parent = this.superview;
+      let depth = 0;
+
+      while (parent && depth < 32) {
+        if (
+          nativeScriptScreenOrReactRootView(
+            parent,
+            RCTRootComponentView,
+            RCTSurfaceView,
+          )
+        ) {
+          return true;
+        }
+
+        parent = parent.superview;
+        depth += 1;
+      }
+
+      return false;
+    }
+
+    refreshSurfaceTouchHandler() {
+      'worklet';
+
+      const RCTSurfaceTouchHandler = nativeValue('RCTSurfaceTouchHandler');
+      const shouldAttach =
+        this.window != null &&
+        !this.isMountedUnderScreenOrReactRoot() &&
+        RCTSurfaceTouchHandler != null;
+      const attachedHandlers = surfaceTouchHandlersForView(
+        this,
+        RCTSurfaceTouchHandler,
+      );
+
+      if (!shouldAttach) {
+        this.detachSurfaceTouchHandler();
+        return;
+      }
+
+      let trackedTouchHandler = this.__rnsNativeScriptSurfaceTouchHandler;
+
+      if (
+        trackedTouchHandler &&
+        !surfaceTouchHandlerIsAttachedToView(trackedTouchHandler, this) &&
+        gestureRecognizerAttachedView(trackedTouchHandler)
+      ) {
+        trackedTouchHandler = null;
+        this.__rnsNativeScriptSurfaceTouchHandler = null;
+        this.__rnsNativeScriptSurfaceTouchHandlerAttached = false;
+      }
+
+      let touchHandler = attachedHandlers[0] ?? trackedTouchHandler;
+
+      if (attachedHandlers.length > 1 && touchHandler) {
+        detachSurfaceTouchHandlersFromView(this, touchHandler);
+      }
+
+      if (!touchHandler) {
+        const allocated =
+          typeof RCTSurfaceTouchHandler.alloc === 'function'
+            ? RCTSurfaceTouchHandler.alloc()
+            : null;
+        touchHandler =
+          allocated && typeof allocated.init === 'function'
+            ? allocated.init()
+            : allocated ?? RCTSurfaceTouchHandler.new?.();
+      }
+
+      this.__rnsNativeScriptSurfaceTouchHandler = touchHandler;
+
+      if (
+        touchHandler &&
+        !surfaceTouchHandlerIsAttachedToView(touchHandler, this)
+      ) {
+        touchHandler.attachToView?.(this);
+      }
+
+      updateSurfaceTouchHandlerOriginForView(this, touchHandler);
+      this.__rnsNativeScriptSurfaceTouchHandlerAttached = touchHandler != null;
+    }
+
+    detachSurfaceTouchHandler() {
+      'worklet';
+
+      const attachedHandlers = detachSurfaceTouchHandlersFromView(this);
+      let expandoHandlerWasAttached = false;
+
+      for (const handler of attachedHandlers) {
+        if (
+          nativeObjectsEqual(handler, this.__rnsNativeScriptSurfaceTouchHandler)
+        ) {
+          expandoHandlerWasAttached = true;
+          break;
+        }
+      }
+
+      if (
+        this.__rnsNativeScriptSurfaceTouchHandler &&
+        !expandoHandlerWasAttached &&
+        this.__rnsNativeScriptSurfaceTouchHandlerAttached === true
+      ) {
+        // NATIVESCRIPT_PORT_DEVIATION: upstream owns the touch handler directly
+        // on the ObjC RNSScreen view. The TS port stores the handler in a JS
+        // expando, so UIKit moves can leave that reference stale; detach only
+        // when React Native still reports this exact view as the recognizer's
+        // owner.
+        detachSurfaceTouchHandlerFromView(
+          this.__rnsNativeScriptSurfaceTouchHandler,
+          this,
+        );
+      }
+
+      this.__rnsNativeScriptSurfaceTouchHandler = null;
+      this.__rnsNativeScriptSurfaceTouchHandlerAttached = false;
+    }
+
+    hitTestWithEvent(point: any, event: any) {
+      'worklet';
+
+      this.refreshSurfaceTouchHandler();
+      layoutHostedSubviewChain(this, 0);
+
+      const superObject = this.super;
+
+      if (typeof superObject?.hitTestWithEvent === 'function') {
+        return superObject.hitTestWithEvent(point, event);
+      }
+
+      if (typeof superObject?.['hitTest:withEvent:'] === 'function') {
+        return superObject['hitTest:withEvent:'](point, event);
+      }
+
+      return null;
+    }
+
+    'hitTest:withEvent:'(point: any, event: any) {
+      'worklet';
+
+      return this.hitTestWithEvent(point, event);
+    }
+
+    providerSafeAreaInsets() {
+      'worklet';
+
+      return this.safeAreaInsets;
+    }
+
+    dispatchSafeAreaDidChangeNotification() {
+      'worklet';
+
+      postSafeAreaDidChangeNotification(this);
+    }
+
+    safeAreaInsetsDidChange() {
+      'worklet';
+
+      this.super?.safeAreaInsetsDidChange?.();
+      this.dispatchSafeAreaDidChangeNotification();
+    }
+  }
+
+  const interopTypes = globalObject.interop?.types;
+  const idType = interopTypes?.id ?? nativeValue('NSObject') ?? UIView;
+  const CGPoint = nativeValue('CGPoint');
+  const UIEvent = nativeValue('UIEvent');
+  const UIEdgeInsets = nativeValue('UIEdgeInsets');
+  const exposedMethods = {
+    didMoveToWindow: {
+      params: [],
+      returns: interopTypes?.void,
+    },
+    isMountedUnderScreenOrReactRoot: {
+      params: [],
+      returns: nativeValue('BOOL') ?? interopTypes?.bool,
+    },
+    refreshSurfaceTouchHandler: {
+      params: [],
+      returns: interopTypes?.void,
+    },
+    detachSurfaceTouchHandler: {
+      params: [],
+      returns: interopTypes?.void,
+    },
+    'hitTest:withEvent:': {
+      params: [CGPoint ?? idType, UIEvent ?? idType],
+      returns: UIView,
+    },
+    providerSafeAreaInsets: {
+      params: [],
+      returns: UIEdgeInsets ?? interopTypes?.id,
+    },
+    dispatchSafeAreaDidChangeNotification: {
+      params: [],
+      returns: interopTypes?.void,
+    },
+    safeAreaInsetsDidChange: {
+      params: [],
+      returns: interopTypes?.void,
+    },
+  };
+
+  (RNSScreenNativeScriptView as any).ObjCExposedMethods = exposedMethods;
+
+  if (typeof UIView.extend === 'function') {
+    const methods: Record<string, unknown> = {};
+    const methodNames = Object.getOwnPropertyNames(
+      RNSScreenNativeScriptView.prototype,
+    );
+
+    for (const methodName of methodNames) {
+      if (methodName === 'constructor') {
+        continue;
+      }
+
+      const descriptor = Object.getOwnPropertyDescriptor(
+        RNSScreenNativeScriptView.prototype,
+        methodName,
+      );
+
+      if (descriptor) {
+        Object.defineProperty(methods, methodName, descriptor);
+      }
+    }
+
+    const ScreenViewClass = UIView.extend(methods, {
+      exposedMethods,
+      name: 'RNSScreenNativeScriptView',
+    });
+
+    globalObject[SCREEN_VIEW_CLASS_KEY] = ScreenViewClass;
+    return ScreenViewClass;
+  }
+
+  NativeClassFunction(RNSScreenNativeScriptView);
+  globalObject[SCREEN_VIEW_CLASS_KEY] = RNSScreenNativeScriptView;
+  return RNSScreenNativeScriptView;
+}
+
+function createNativeScriptScreenView() {
+  'worklet';
+  const UIView = nativeScriptScreenViewClass();
+  const allocated =
+    UIView && typeof UIView.alloc === 'function' ? UIView.alloc() : null;
+  const view =
+    allocated && typeof allocated.init === 'function'
+      ? allocated.init()
+      : allocated;
+
+  if (view) {
+    view.__rnsNativeScriptScreenView = true;
+  }
+
+  return view;
 }
 
 function setScreenControllerIdentity(controller: any, screenId: string) {
@@ -4090,13 +4930,7 @@ function ensureScreenControllerView(controller: any) {
     return controller.view;
   }
 
-  const UIView = nativeValue('UIView');
-  const allocated =
-    UIView && typeof UIView.alloc === 'function' ? UIView.alloc() : null;
-  const view =
-    allocated && typeof allocated.init === 'function'
-      ? allocated.init()
-      : allocated;
+  const view = createNativeScriptScreenView();
 
   if (view) {
     // RNSScreen's native initWithView: makes the screen controller own the
@@ -4947,6 +5781,16 @@ function nativeScriptScreenControllerClass() {
   }
 
   class RNSScreenNativeScriptController extends UIViewController {
+    loadView() {
+      'worklet';
+
+      const view = createNativeScriptScreenView();
+
+      if (view) {
+        this.view = view;
+      }
+    }
+
     viewWillAppear(animated: boolean) {
       'worklet';
 
@@ -5036,7 +5880,14 @@ function nativeScriptScreenControllerClass() {
 
       callNativeScriptControllerSuper(this, 'viewDidAppear', true, animated);
       this.view?.superview?.bringSubviewToFront?.(this.view);
-      layoutHostedReactSubviews(this);
+      layoutHostedReactSubviewsForControllerHierarchy(this);
+      {
+        const registry = getRegistry(globalThis as Record<string, any>);
+        refreshScreenContentWrapperHost(
+          screenIdForController(this, registry),
+          registry,
+        );
+      }
 
       if (
         this.__nativeScriptScreenIsSwiping !== true ||
@@ -5386,6 +6237,10 @@ function nativeScriptScreenControllerClass() {
         return;
       }
 
+      // NATIVESCRIPT_PORT_DEVIATION: UIKit's snapshot is only a transition
+      // placeholder. Keep it outside hit-testing so a native-owned pop cannot
+      // leave a retained visual view intercepting touches from later modals.
+      snapshot.userInteractionEnabled = false;
       snapshot.frame = view.frame;
       view.removeFromSuperview?.();
       this.view = snapshot;
@@ -5473,6 +6328,10 @@ function nativeScriptScreenControllerClass() {
   // equivalent of RNSScreen exposing -handleAnimation to CADisplayLink and
   // UIKit calling UIViewController lifecycle selectors.
   const exposedMethods = {
+    loadView: {
+      params: [],
+      returns: interopTypes?.void,
+    },
     'viewWillAppear:': {
       params: boolType ? [boolType] : [],
       returns: interopTypes?.void,
@@ -5669,6 +6528,107 @@ function navigationControllerContainsController(
   return false;
 }
 
+function controllerHierarchyContainsController(
+  rootController: any,
+  controller: any,
+  depth = 0,
+): boolean {
+  'worklet';
+
+  if (!rootController || !controller || depth > 16) {
+    return false;
+  }
+
+  if (controllersEqual(rootController, controller)) {
+    return true;
+  }
+
+  if (navigationControllerContainsController(rootController, controller)) {
+    return true;
+  }
+
+  const viewControllers = rootController.viewControllers;
+  const viewControllerCount = arrayCount(viewControllers);
+
+  for (let index = 0; index < viewControllerCount; index += 1) {
+    const child = arrayItem(viewControllers, index);
+
+    if (
+      !controllersEqual(child, rootController) &&
+      controllerHierarchyContainsController(child, controller, depth + 1)
+    ) {
+      return true;
+    }
+  }
+
+  const childViewControllers = rootController.childViewControllers;
+  const childViewControllerCount = arrayCount(childViewControllers);
+
+  for (let index = 0; index < childViewControllerCount; index += 1) {
+    const child = arrayItem(childViewControllers, index);
+
+    if (
+      !controllersEqual(child, rootController) &&
+      controllerHierarchyContainsController(child, controller, depth + 1)
+    ) {
+      return true;
+    }
+  }
+
+  const presentedController = rootController.presentedViewController;
+
+  return (
+    !controllersEqual(presentedController, rootController) &&
+    controllerHierarchyContainsController(
+      presentedController,
+      controller,
+      depth + 1,
+    )
+  );
+}
+
+function presentedControllerChainContainsController(
+  rootController: any,
+  controller: any,
+) {
+  'worklet';
+
+  let presentedController = rootController?.presentedViewController;
+  let depth = 0;
+
+  while (presentedController && depth < 16) {
+    if (
+      controllerHierarchyContainsController(presentedController, controller)
+    ) {
+      return true;
+    }
+
+    presentedController = presentedController.presentedViewController;
+    depth += 1;
+  }
+
+  return false;
+}
+
+function controllerParticipatesInUIKitPresentation(
+  rootController: any,
+  controller: any,
+) {
+  'worklet';
+
+  if (!controller) {
+    return false;
+  }
+
+  return (
+    nativeBool(controller, 'isBeingPresented') ||
+    nativeBool(controller, 'isBeingDismissed') ||
+    controller.presentingViewController != null ||
+    controller.presentedViewController != null ||
+    presentedControllerChainContainsController(rootController, controller)
+  );
+}
+
 function screenIdInList(screenId: string, ids: string[]) {
   'worklet';
 
@@ -5704,17 +6664,20 @@ function screenControllerIsVisibleInNativeStack(
     typeof presentedModalKey === 'string'
       ? presentedModalKey.split(SCREEN_ID_SEPARATOR)
       : [];
+  const navigationController = registry.stacks[stackId];
 
   if (screenControllerWasRemovedFromParent(controller)) {
     return false;
   }
 
   return (
-    navigationControllerContainsController(
-      registry.stacks[stackId],
+    controllerHierarchyContainsController(navigationController, controller) ||
+    (screenId != null && screenIdInList(screenId, presentedModalIds)) ||
+    controllerParticipatesInUIKitPresentation(
+      navigationController,
       controller,
     ) ||
-    (screenId != null && screenIdInList(screenId, presentedModalIds))
+    controllerParticipatesInUIKitPresentation(rootViewController(), controller)
   );
 }
 
@@ -5771,6 +6734,42 @@ function dismissCountFromControllerToController(
   return dismissCount > 0 ? dismissCount : 1;
 }
 
+function detachInactiveNativeScriptScreen(controller: any) {
+  'worklet';
+
+  if (!controller) {
+    return;
+  }
+
+  // NATIVESCRIPT_PORT_DEVIATION: upstream Fabric unmount calls
+  // RNSScreenStackView::unmountChildComponentView, snapshots the screen, and
+  // removes the RNSScreenView from its superview. The TS port can retain a
+  // controller object while UIKit finishes a native pop, so once the controller
+  // is no longer part of UINavigationController/presentation state we must
+  // remove any leftover native view as well or it can keep hit-testing above
+  // later modals.
+  const view = controller.view;
+  if (view) {
+    view.userInteractionEnabled = false;
+
+    if (typeof view.removeFromSuperview === 'function') {
+      view.removeFromSuperview();
+    }
+  }
+
+  if (controller.parentViewController != null) {
+    if (typeof controller.willMoveToParentViewController === 'function') {
+      controller.willMoveToParentViewController(null);
+    }
+
+    if (typeof controller.removeFromParentViewController === 'function') {
+      controller.removeFromParentViewController();
+    }
+  }
+
+  controller.__nativeScriptIsRemovedFromParent = true;
+}
+
 function cleanupDetachedScreens(
   stackId: string,
   registry: NativeScriptStackRegistry,
@@ -5798,6 +6797,7 @@ function cleanupDetachedScreens(
       continue;
     }
 
+    detachInactiveNativeScriptScreen(registry.screens[screenId]);
     clearScreenRecord(registry, screenId);
   }
 }
@@ -7239,7 +8239,7 @@ function layoutContainerScreen(parentController: any, screenController: any) {
 
   screenView.frame = parentView.bounds;
   screenView.autoresizingMask = flexibleSizeMask();
-  layoutHostedReactSubviews(screenController);
+  layoutHostedReactSubviewsForControllerHierarchy(screenController);
 }
 
 function attachContainerScreen(
@@ -7539,22 +8539,79 @@ function gestureResponseDistanceAllows(
 export const __nativeScriptStackGestureResponseDistanceAllowsForTests =
   gestureResponseDistanceAllows;
 
+function findSurfaceTouchHandlerInAncestorChain(view: any) {
+  'worklet';
+  const RCTSurfaceView = nativeValue('RCTSurfaceView');
+  const RCTRootComponentView = nativeValue('RCTRootComponentView');
+  let currentView = view?.superview;
+  let depth = 0;
+
+  while (currentView && depth < 32) {
+    if (
+      nativeScriptScreenOrReactRootView(
+        currentView,
+        RCTRootComponentView,
+        RCTSurfaceView,
+      )
+    ) {
+      break;
+    }
+
+    currentView = currentView.superview;
+    depth += 1;
+  }
+
+  if (!currentView) {
+    return null;
+  }
+
+  const gestureRecognizers = currentView.gestureRecognizers;
+  const gestureRecognizerCount = arrayCount(gestureRecognizers);
+
+  for (let index = 0; index < gestureRecognizerCount; index += 1) {
+    const gestureRecognizer = arrayItem(gestureRecognizers, index);
+
+    if (isSurfaceTouchHandlerGestureRecognizer(gestureRecognizer)) {
+      return gestureRecognizer;
+    }
+  }
+
+  return null;
+}
+
 function cancelTouchesInParent(view: any) {
   'worklet';
 
-  // Upstream RNSScreenStackView calls UIView+RNSUtility here. NativeScript can
-  // invoke the same Objective-C category selector dynamically, so this stays a
-  // generic UIKit interop call instead of a package-specific TurboModule API.
-  const touchHandler =
+  // Upstream RNSScreenStackView calls UIView+RNSUtility here. Apps using this
+  // TypeScript port do not link react-native-screens' ObjC categories, so fall
+  // back to the same generic search through UIKit gesture recognizers.
+  let touchHandler =
     typeof view?.rnscreens_findTouchHandlerInAncestorChain === 'function'
       ? view.rnscreens_findTouchHandlerInAncestorChain()
       : null;
 
-  if (typeof touchHandler?.rnscreens_cancelTouches !== 'function') {
+  if (!touchHandler) {
+    touchHandler = findSurfaceTouchHandlerInAncestorChain(view);
+  }
+
+  if (!touchHandler) {
     return false;
   }
 
-  touchHandler.rnscreens_cancelTouches();
+  if (typeof touchHandler.rnscreens_cancelTouches === 'function') {
+    touchHandler.rnscreens_cancelTouches();
+    return true;
+  }
+
+  if (typeof touchHandler.setEnabled === 'function') {
+    touchHandler.setEnabled(false);
+    touchHandler.setEnabled(true);
+  } else {
+    touchHandler.enabled = false;
+    touchHandler.enabled = true;
+  }
+
+  touchHandler.reset?.();
   return true;
 }
 
@@ -8587,7 +9644,7 @@ function configureScreenController(
       headerConfig?.backgroundColor,
       'systemBackgroundColor',
     );
-    layoutHostedReactSubviews(controller);
+    layoutHostedReactSubviewsForControllerHierarchy(controller);
     updateContentScrollViewEdgeEffectsIfExists(controller, props);
   }
 
@@ -8944,6 +10001,8 @@ function schedulePostTransitionSettle(
     }
 
     registry.stackTransitionSettling[stackId] = undefined;
+    layoutPresentedModalControllers(stackId, registry);
+    refreshRegisteredScreenContentWrapperHosts(registry);
     scheduledReconcileStack(stackId, registry, ctx, true);
   };
 
@@ -9233,6 +10292,8 @@ function completeModalTransitionTransaction(
   }
 
   updateWindowTraits(registry.stacks[stackId]);
+  layoutPresentedModalControllers(stackId, registry);
+  refreshRegisteredScreenContentWrapperHosts(registry);
 }
 
 function completeNativePresentedModalDismissalForController(controller: any) {
@@ -9545,7 +10606,7 @@ function refreshScreenContentReady(
     controller?.view &&
     NativeScriptRuntime.refreshUIKitHostView(controller.view)
   ) {
-    layoutHostedReactSubviews(controller);
+    layoutHostedReactSubviewsForControllerHierarchy(controller);
     registry.screenContentReady[screenId] = true;
     return true;
   }

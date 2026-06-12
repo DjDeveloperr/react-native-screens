@@ -86,3 +86,10 @@ export function notifyNativeScriptScreenContentWrapperFrame(
 ) {
   return undefined;
 }
+
+export function notifyNativeScriptScreenContentWrapperHostReady(
+  _screenId: string | undefined,
+  _contentWrapperViewHandle: string | undefined,
+) {
+  return Promise.resolve(false);
+}

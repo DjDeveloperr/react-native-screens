@@ -7,18 +7,25 @@ import {
   __nativeScriptConfigureHeaderSubviewViewsForTests,
   __nativeScriptConfigureSourceBackButtonForTests,
   __nativeScriptCreateHeaderBarButtonItemsForTests,
+  __nativeScriptDetachSurfaceTouchHandlerFromViewForTests,
+  __nativeScriptDetachSurfaceTouchHandlersForTests,
+  __nativeScriptHostedSubviewChildBoundsRepairHeightForTests,
   __nativeScriptOverrideScrollViewBehaviorInFirstDescendantChainForTests,
   __nativeScriptPresentationCoordinatorControllerForTests,
   __nativeScriptRegisterHeaderSubviewForTests,
+  __nativeScriptRepairHostedSubviewHeightForTests,
   __nativeScriptShouldOverrideScrollViewContentInsetAdjustmentBehaviorForTests,
   __nativeScriptShouldInstallBackdropTapGestureForTests,
   __nativeScriptShouldReceiveBackdropTapTouchForTests,
+  __nativeScriptSurfaceTouchHandlerAttachedToViewForTests,
+  __nativeScriptSurfaceTouchHandlersForTests,
   __nativeScriptStackCancelTouchesInParentForTests,
   __nativeScriptControllersForStackUIKitModelIdsForTests,
   __nativeScriptStackGestureResponseDistanceAllowsForTests,
   __nativeScriptStackGestureDelegateDecisionForTests,
   __nativeScriptStackScreenParticipatesInUIKitModelForTests,
   __nativeScriptStackSwipeMetricForTests,
+  __nativeScriptUpdateSurfaceTouchHandlerOriginForTests,
   __nativeScriptUnregisterHeaderSubviewForTests,
   __mergeNativeScriptStackChildrenForTests,
   __shouldReceiveNativeScriptStackBackGestureForTests,
@@ -59,6 +66,10 @@ const searchBarSource = fs.readFileSync(
 );
 const safeAreaViewSource = fs.readFileSync(
   path.resolve(__dirname, '../../safe-area/SafeAreaView.tsx'),
+  'utf8',
+);
+const safeAreaViewIOSSource = fs.readFileSync(
+  path.resolve(__dirname, '../../safe-area/SafeAreaView.ios.tsx'),
   'utf8',
 );
 const fullWindowOverlaySource = fs.readFileSync(
@@ -541,21 +552,40 @@ describe('NativeScript ScreenStack port', () => {
       "debugName: 'RNSScreenContentWrapper.NativeScript'",
     );
     expect(screenContentWrapperSource).toContain('attachNativeView');
+    expect(screenContentWrapperSource).toContain(
+      'NativeScriptRuntime.refreshUIKitHostView(childrenView);',
+    );
+    expect(screenContentWrapperSource).toContain(
+      'NativeScriptRuntime.refreshUIKitHostView(rootView);',
+    );
+    expect(screenContentWrapperSource).not.toContain('setTimeout(refresh');
     expect(screenStackHeaderConfigSource).toContain("Platform.OS === 'ios'");
     expect(screenStackHeaderConfigSource).toContain('<View');
-    expect(safeAreaViewSource).toContain("Platform.OS === 'ios'");
-    expect(safeAreaViewSource).toContain('<View');
-    expect(safeAreaViewSource).toContain(
-      'NATIVESCRIPT_PORT_DEVIATION: upstream iOS uses ObjC/Fabric',
+    expect(safeAreaViewSource).not.toContain("Platform.OS === 'ios'");
+    expect(safeAreaViewIOSSource).toContain(
+      'NativeScriptRuntime.defineUIKitContainer',
     );
-    expect(safeAreaViewSource).toContain(
-      'this fork disables that native implementation',
+    expect(safeAreaViewIOSSource).toContain(
+      "debugName: 'RNSSafeAreaView.NativeScript'",
     );
-    expect(safeAreaViewSource).toContain(
-      'iOS 26 screen wrapper shape is still preserved',
+    expect(safeAreaViewIOSSource).toContain(
+      '__rnsNativeScriptSafeAreaContentView',
     );
-    expect(safeAreaViewSource).toContain(
-      'would duplicate\n    // UIKit navigation-controller layout',
+    expect(stackSource).toContain('providerSafeAreaInsets');
+    expect(stackSource).toContain('RNSSafeAreaDidChange');
+    expect(stackSource).toContain('function nativeScriptScreenViewClass');
+    expect(stackSource).toContain('function createNativeScriptScreenView');
+    expect(stackSource).toContain('refreshSurfaceTouchHandler()');
+    expect(stackSource).toContain("nativeValue('RCTSurfaceTouchHandler')");
+    expect(stackSource).toContain('attachToView?.(this)');
+    expect(stackSource).toContain('detachSurfaceTouchHandlerFromView');
+    expect(stackSource).toContain('loadView()');
+    expect(stackSource).toContain('this.view = view;');
+    expect(safeAreaViewIOSSource).toContain(
+      'NATIVESCRIPT_PORT_DEVIATION: upstream RNSSafeAreaViewComponentView',
+    );
+    expect(safeAreaViewIOSSource).toContain(
+      'NativeScript cannot mutate that Fabric C++ shadow state',
     );
     expect(screenFooterSource).toContain("Platform.OS === 'ios'");
     expect(screenFooterSource).toContain('<View');
@@ -663,10 +693,11 @@ describe('NativeScript ScreenStack port', () => {
     expect(screenContentWrapperSource).toContain(
       'notifyNativeScriptScreenContentWrapperFrame',
     );
-    expect(screenContentWrapperSource).toContain('childrenView,\n  );');
+    expect(screenContentWrapperSource).toContain('childrenView,\n    );');
     expect(screenContentWrapperSource).toContain(
-      'screenId={screenContext?.screenId}',
+      'const screenId = screenContext?.screenId;',
     );
+    expect(screenContentWrapperSource).toContain('screenId={screenId}');
     expect(stackSource).toContain('const SHEET_FIT_TO_CONTENTS = -1');
     expect(stackSource).toContain('screenSheetContentHeights');
     expect(stackSource).toContain('screenContentWrapperViews');
@@ -800,12 +831,12 @@ describe('NativeScript ScreenStack port', () => {
   });
 
   it('documents every current mechanical deviation in NativeScript wrapper components', () => {
-    const wrapperSources = `${screenContentWrapperSource}\n${screenStackHeaderConfigSource}\n${searchBarSource}\n${safeAreaViewSource}\n${fullWindowOverlaySource}`;
+    const wrapperSources = `${screenContentWrapperSource}\n${screenStackHeaderConfigSource}\n${searchBarSource}\n${safeAreaViewIOSSource}\n${fullWindowOverlaySource}`;
     const expectedDeviationReasons = [
       'upstream RNSScreenContentWrapper is a\n      // native component view',
       'upstream RNSScreenStackHeaderConfig owns\n    // RNSScreenStackHeaderSubview native component views',
       'upstream RNSSearchBar implements\n      // `+shouldBeRecycled` as `NO`',
-      'upstream iOS uses ObjC/Fabric\n    // RNSSafeAreaView',
+      'upstream RNSSafeAreaViewComponentView writes\n  // provider insets',
       'upstream keeps every overlay in front with\n  // `UIWindow+RNScreens.didAddSubview:`',
     ];
 
@@ -891,7 +922,9 @@ describe('NativeScript ScreenStack port', () => {
     expect(stackSource).toContain(
       'emitTopScreenHeaderHeightAfterNavigationLayout(this)',
     );
-    expect(stackSource).toContain('layoutHostedReactSubviews(topController)');
+    expect(stackSource).toContain(
+      'layoutHostedReactSubviewsForControllerHierarchy(topController)',
+    );
     expect(stackSource).toContain(
       'emitHeaderHeightChange(\n    topController,',
     );
@@ -959,7 +992,9 @@ describe('NativeScript ScreenStack port', () => {
     expect(screenControllerSource).toContain(
       'this.view?.superview?.bringSubviewToFront?.(this.view)',
     );
-    expect(screenControllerSource).toContain('layoutHostedReactSubviews(this)');
+    expect(screenControllerSource).toContain(
+      'layoutHostedReactSubviewsForControllerHierarchy(this)',
+    );
     expect(stackSource).toContain(
       'screenControllerIsPresentedAsNativeModal(props) && screenId',
     );
@@ -1007,6 +1042,7 @@ describe('NativeScript ScreenStack port', () => {
   it('invokes NativeScript native method host functions directly', () => {
     expect(stackSource).toContain('function callNativeScriptControllerSuper');
     expect(stackSource).toContain('const superObject = controller?.super');
+    expect(stackSource).toContain('api?.getClass?.(name)');
     expect(stackSource).toContain("controller.invoke('transitionCoordinator')");
     expect(stackSource).toContain('? controller.transitionCoordinator()');
     expect(stackSource).toContain('return receiver[name]() === true');
@@ -1971,6 +2007,12 @@ describe('NativeScript ScreenStack port', () => {
       'React owns child element lifetime in the TS\n  // port',
       'upstream re-reads from/to views from\n        // transitionCoordinator',
       'upstream receives the exact\n          // RNSScreen controller in didShow',
+      'upstream RNSScreenContentWrapper is a native\n  // component view under the same UIKit hit-test tree',
+      'upstream RNSScreenContentWrapper is a native\n  // UIKit/Fabric component whose ancestors already have coherent bounds during',
+      'upstream calls an ObjC category that\n      // already knows about RCTSurfaceTouchHandler',
+      'upstream owns the touch handler directly\n        // on the ObjC RNSScreen view',
+      "UIKit's snapshot is only a transition\n      // placeholder",
+      'upstream Fabric unmount calls\n  // RNSScreenStackView::unmountChildComponentView',
       'generated ObjC props carry default\n    // `automatic` edge values',
     ];
 
@@ -2123,11 +2165,80 @@ describe('NativeScript ScreenStack port', () => {
     expect(stackSource).toContain(
       'shouldFillHostedSubview(rootView, subview, depth)',
     );
+    expect(stackSource).toContain('__rnsNativeScriptSafeAreaContentView');
+    expect(stackSource).toContain(
+      'const safeAreaContentSubviews = subview.subviews',
+    );
+    expect(stackSource).not.toContain(
+      'function enableNativeViewInteractionAncestorChain',
+    );
+    expect(stackSource).toContain('function refreshScreenContentWrapperHost');
+    expect(stackSource).toContain(
+      'function refreshRegisteredScreenContentWrapperHosts',
+    );
+    expect(stackSource).toContain('controller.view.superview?.bounds');
+    expect(stackSource).not.toContain(
+      'controller.view.superview?.frame ?? fallbackBounds',
+    );
+    expect(stackSource).toContain(
+      'NativeScriptRuntime.refreshUIKitHostView(contentWrapperView);',
+    );
+    expect(stackSource).toContain(
+      'contentWrapperView.userInteractionEnabled = true;',
+    );
+    expect(stackSource).toContain(
+      'refreshScreenContentWrapperHost(modalId, registry);',
+    );
+    expect(stackSource).toContain(
+      'refreshRegisteredScreenContentWrapperHosts(registry);',
+    );
+    expect(stackSource).toContain(
+      'refreshScreenContentWrapperHost(screenId, registry);',
+    );
+    expect(stackSource).toContain(
+      'function repairHostedSubviewHeightForChildren',
+    );
+    expect(stackSource).toContain('hostedSubviewMaxVisibleChildBottom(view)');
+    expect(stackSource).toContain(
+      'Pressables below that stale bound never receive',
+    );
+    expect(stackSource).toContain('depth > 16');
+    expect(stackSource).toContain('layoutHostedSubviewChain(this, 0);');
+    expect(stackSource).not.toContain('subview.userInteractionEnabled = true');
+    expect(stackSource).toContain('detachInactiveNativeScriptScreen');
+    expect(stackSource).toContain(
+      "typeof view.removeFromSuperview === 'function'",
+    );
+    expect(stackSource).toContain(
+      'function presentedControllerChainContainsController',
+    );
+    expect(stackSource).toContain(
+      'function controllerHierarchyContainsController',
+    );
+    expect(stackSource).toContain('rootController.childViewControllers');
+    expect(stackSource).toContain(
+      'controllerHierarchyContainsController(navigationController, controller)',
+    );
+    expect(stackSource).toContain(
+      'function controllerParticipatesInUIKitPresentation',
+    );
+    expect(stackSource).toContain(
+      'controller.presentingViewController != null',
+    );
+    expect(stackSource).toContain(
+      'controllerParticipatesInUIKitPresentation(rootViewController(), controller)',
+    );
     expect(stackSource).toContain('depth <= 1');
     expect(stackSource).toContain('childWidth <= 0');
     const layoutHostedReactSubviewsSource = stackSource.slice(
       stackSource.indexOf('function layoutHostedReactSubviews'),
       stackSource.indexOf('function refreshNavigationControllerHostedViews'),
+    );
+    expect(layoutHostedReactSubviewsSource).toContain(
+      'rootView.userInteractionEnabled = true;',
+    );
+    expect(layoutHostedReactSubviewsSource).not.toContain(
+      'subview.userInteractionEnabled = true',
     );
     expect(
       layoutHostedReactSubviewsSource.indexOf(
@@ -2138,6 +2249,76 @@ describe('NativeScript ScreenStack port', () => {
         'subview.frame = rootView.bounds;',
       ),
     );
+
+    const staleFullWidthWrapper: any = {
+      alpha: 1,
+      bounds: { origin: { x: 0, y: 0 }, size: { width: 402, height: 174.667 } },
+      frame: { origin: { x: 0, y: 0 }, size: { width: 402, height: 174.667 } },
+      hidden: false,
+      subviews: [
+        {
+          alpha: 1,
+          frame: {
+            origin: { x: 18, y: 317.333 },
+            size: { width: 366, height: 50 },
+          },
+          hidden: false,
+        },
+      ],
+      superview: {
+        bounds: { origin: { x: 0, y: 0 }, size: { width: 402, height: 437 } },
+      },
+      userInteractionEnabled: false,
+    };
+
+    expect(
+      __nativeScriptHostedSubviewChildBoundsRepairHeightForTests(
+        staleFullWidthWrapper,
+      ),
+    ).toBeCloseTo(367.333);
+    expect(
+      __nativeScriptRepairHostedSubviewHeightForTests(staleFullWidthWrapper),
+    ).toBe(true);
+    expect(staleFullWidthWrapper.frame.size.height).toBeCloseTo(367.333);
+    expect(staleFullWidthWrapper.bounds.size.height).toBeCloseTo(367.333);
+    expect(staleFullWidthWrapper.userInteractionEnabled).toBe(false);
+
+    const offsetUserLayout = {
+      ...staleFullWidthWrapper,
+      frame: {
+        origin: { x: 18, y: 0 },
+        size: { width: 366, height: 174.667 },
+      },
+    };
+    expect(
+      __nativeScriptHostedSubviewChildBoundsRepairHeightForTests(
+        offsetUserLayout,
+      ),
+    ).toBe(0);
+
+    const wrapperWithOverflowingStaleChild = {
+      ...staleFullWidthWrapper,
+      bounds: { origin: { x: 0, y: 0 }, size: { width: 402, height: 174.667 } },
+      frame: { origin: { x: 0, y: 0 }, size: { width: 402, height: 174.667 } },
+      subviews: [
+        {
+          alpha: 1,
+          frame: {
+            origin: { x: 18, y: 147 },
+            size: { width: 768, height: 329 },
+          },
+          hidden: false,
+        },
+      ],
+      superview: {
+        bounds: { origin: { x: 0, y: 0 }, size: { width: 402, height: 437 } },
+      },
+    };
+    expect(
+      __nativeScriptHostedSubviewChildBoundsRepairHeightForTests(
+        wrapperWithOverflowingStaleChild,
+      ),
+    ).toBe(437);
   });
 
   it('matches upstream scroll-view priority for stack back gesture delegates', () => {
@@ -2265,12 +2446,196 @@ describe('NativeScript ScreenStack port', () => {
 
     expect(__nativeScriptStackCancelTouchesInParentForTests(view)).toBe(true);
     expect(cancelCount).toBe(1);
+    const RCTSurfaceTouchHandler = function RCTSurfaceTouchHandler() {};
+    const enabledStates: boolean[] = [];
+    let resetCount = 0;
+    (global as Record<string, unknown>).__nativeScriptNativeApi = {
+      RCTSurfaceTouchHandler,
+    };
+    const gestureRecognizer = {
+      isKindOfClass: (klass: unknown) => klass === RCTSurfaceTouchHandler,
+      reset: () => {
+        resetCount += 1;
+      },
+      setEnabled: (enabled: boolean) => {
+        enabledStates.push(enabled);
+      },
+    };
+
+    expect(
+      __nativeScriptStackCancelTouchesInParentForTests({
+        superview: {
+          __rnsNativeScriptScreenView: true,
+          gestureRecognizers: [gestureRecognizer],
+        },
+      }),
+    ).toBe(true);
+    expect(enabledStates).toEqual([false, true]);
+    expect(resetCount).toBe(1);
+    enabledStates.length = 0;
+    resetCount = 0;
+    expect(
+      __nativeScriptStackCancelTouchesInParentForTests({
+        superview: {
+          __rnsNativeScriptScreenView: true,
+          gestureRecognizers: [
+            {
+              description: () => '<RCTSurfaceTouchHandler: 0x123>',
+              isKindOfClass: () => {
+                throw new TypeError('class wrapper mismatch');
+              },
+              reset: () => {
+                resetCount += 1;
+              },
+              setEnabled: (enabled: boolean) => {
+                enabledStates.push(enabled);
+              },
+            },
+          ],
+        },
+      }),
+    ).toBe(true);
+    expect(enabledStates).toEqual([false, true]);
+    expect(resetCount).toBe(1);
+    delete (global as Record<string, unknown>).__nativeScriptNativeApi;
     expect(__nativeScriptStackCancelTouchesInParentForTests({})).toBe(false);
     expect(stackSource).toContain('function cancelTouchesInParent');
+    expect(stackSource).toContain(
+      'function findSurfaceTouchHandlerInAncestorChain',
+    );
+    expect(stackSource).toContain('function nativeObjectDescription');
+    expect(stackSource).toContain('RCTSurfaceTouchHandler');
+    expect(stackSource).toContain("nativeValue('RCTSurfaceView')");
+    expect(stackSource).toContain('function nativeScriptScreenOrReactRootView');
     expect(stackSource).toContain(
       'cancelTouchesInParent(navigationController.view);',
     );
     expect(stackSource).toContain('cancelTouchesInParent(view);');
+  });
+
+  it('keeps RNSScreenNativeScriptView surface touch handler ownership idempotent', () => {
+    const RCTSurfaceTouchHandler = function RCTSurfaceTouchHandler() {};
+    (global as Record<string, unknown>).__nativeScriptNativeApi = {
+      RCTSurfaceTouchHandler,
+    };
+
+    const keptHandler = {
+      detachFromView: jest.fn(),
+      isKindOfClass: (klass: unknown) => klass === RCTSurfaceTouchHandler,
+    };
+    const unrelatedGesture = {
+      detachFromView: jest.fn(),
+      description: () => '<UIPanGestureRecognizer: 0x999>',
+    };
+    const duplicateHandler = {
+      detachFromView: jest.fn(),
+      description: () => '<RCTSurfaceTouchHandler: 0x123>',
+      isKindOfClass: () => {
+        throw new TypeError('class wrapper mismatch');
+      },
+    };
+    const view = {
+      gestureRecognizers: [keptHandler, unrelatedGesture, duplicateHandler],
+    };
+
+    expect(__nativeScriptSurfaceTouchHandlersForTests(view)).toEqual([
+      keptHandler,
+      duplicateHandler,
+    ]);
+    expect(
+      __nativeScriptDetachSurfaceTouchHandlersForTests(view, keptHandler),
+    ).toEqual([keptHandler, duplicateHandler]);
+    expect(keptHandler.detachFromView).not.toHaveBeenCalled();
+    expect(unrelatedGesture.detachFromView).not.toHaveBeenCalled();
+    expect(duplicateHandler.detachFromView).toHaveBeenCalledWith(view);
+
+    const ownedHandler = {
+      detachFromView: jest.fn(),
+      view: undefined as any,
+    };
+    const ownedView = {
+      gestureRecognizers: [ownedHandler],
+    };
+    ownedHandler.view = ownedView;
+    expect(
+      __nativeScriptSurfaceTouchHandlerAttachedToViewForTests(
+        ownedHandler,
+        ownedView,
+      ),
+    ).toBe(true);
+    expect(
+      __nativeScriptDetachSurfaceTouchHandlerFromViewForTests(
+        ownedHandler,
+        ownedView,
+      ),
+    ).toBe(true);
+    expect(ownedHandler.detachFromView).toHaveBeenCalledWith(ownedView);
+
+    const staleTrackedHandler = {
+      detachFromView: jest.fn(),
+      view: undefined as any,
+    };
+    const otherView = {
+      gestureRecognizers: [staleTrackedHandler],
+    };
+    staleTrackedHandler.view = otherView;
+    const staleView = {
+      gestureRecognizers: [],
+    };
+    expect(
+      __nativeScriptSurfaceTouchHandlerAttachedToViewForTests(
+        staleTrackedHandler,
+        staleView,
+      ),
+    ).toBe(false);
+    expect(
+      __nativeScriptDetachSurfaceTouchHandlerFromViewForTests(
+        staleTrackedHandler,
+        staleView,
+      ),
+    ).toBe(false);
+    expect(staleTrackedHandler.detachFromView).not.toHaveBeenCalled();
+
+    const originHandler: { viewOriginOffset?: { x: number; y: number } } = {};
+    __nativeScriptUpdateSurfaceTouchHandlerOriginForTests(
+      {
+        convertPointToView: (
+          point: { x: number; y: number },
+          window: object,
+        ) => ({
+          x: point.x + (window as { x: number }).x,
+          y: point.y + (window as { y: number }).y,
+        }),
+        window: { x: 0, y: 62 },
+      },
+      originHandler,
+    );
+    expect(originHandler.viewOriginOffset).toEqual({ x: 0, y: 62 });
+
+    delete (global as Record<string, unknown>).__nativeScriptNativeApi;
+
+    expect(stackSource).toContain('function surfaceTouchHandlersForView');
+    expect(stackSource).toContain('function gestureRecognizerAttachedView');
+    expect(stackSource).toContain('function detachSurfaceTouchHandlerFromView');
+    expect(stackSource).toContain(
+      'gestureRecognizerAttachedView(trackedTouchHandler)',
+    );
+    expect(stackSource).toContain(
+      'function detachSurfaceTouchHandlersFromView',
+    );
+    expect(stackSource).toContain(
+      'function updateSurfaceTouchHandlerOriginForView',
+    );
+    expect(stackSource).toContain('handler.viewOriginOffset = origin');
+    expect(stackSource).toContain('attachedHandlers.length > 1');
+    expect(stackSource).toContain(
+      'this.__rnsNativeScriptSurfaceTouchHandler = touchHandler',
+    );
+    expect(stackSource).toContain(
+      "'hitTest:withEvent:'(point: any, event: any)",
+    );
+    expect(stackSource).toContain('this.refreshSurfaceTouchHandler();');
+    expect(stackSource).toContain('layoutHostedSubviewChain(this, 0);');
   });
 
   it('matches upstream custom edge selection for RTL and slide-from-left gestures', () => {
@@ -2510,6 +2875,23 @@ describe('NativeScript ScreenStack port', () => {
     ).toBeLessThan(
       stackSource.indexOf('function schedulePostTransitionSettle'),
     );
+    expect(
+      stackSource.indexOf('function detachInactiveNativeScriptScreen'),
+    ).toBeLessThan(stackSource.indexOf('function cleanupDetachedScreens'));
+    expect(
+      stackSource.indexOf('function controllerHierarchyContainsController'),
+    ).toBeLessThan(
+      stackSource.indexOf(
+        'function presentedControllerChainContainsController',
+      ),
+    );
+    expect(
+      stackSource.indexOf(
+        'function presentedControllerChainContainsController',
+      ),
+    ).toBeLessThan(
+      stackSource.indexOf('function screenControllerIsVisibleInNativeStack'),
+    );
   });
 
   it('keeps UIKit stack content interactive while transition state gates reconciliation', () => {
@@ -2577,8 +2959,17 @@ describe('NativeScript ScreenStack port', () => {
       'registry.stackTransitionSettling[stackId] = undefined',
     );
     expect(settleSource).toContain(
+      'layoutPresentedModalControllers(stackId, registry);',
+    );
+    expect(settleSource).toContain(
+      'refreshRegisteredScreenContentWrapperHosts(registry);',
+    );
+    expect(settleSource).toContain(
       'scheduledReconcileStack(stackId, registry, ctx, true)',
     );
+    expect(
+      settleSource.indexOf('refreshRegisteredScreenContentWrapperHosts'),
+    ).toBeLessThan(settleSource.indexOf('scheduledReconcileStack'));
     expect(settleSource).not.toContain(
       'setNavigationControllerViewControllers',
     );
@@ -2928,7 +3319,7 @@ describe('NativeScript ScreenStack port', () => {
       'if (!refreshScreenContentReady(firstModalId, firstModalController, registry))',
     );
     expect(refreshReadySource).toContain(
-      'layoutHostedReactSubviews(controller);',
+      'layoutHostedReactSubviewsForControllerHierarchy(controller);',
     );
   });
 
@@ -2949,9 +3340,29 @@ describe('NativeScript ScreenStack port', () => {
     expect(wrapperFrameSource).toContain(
       'reconcileStackFromRegistry(stackId, registry, stackCtx, true);',
     );
+    expect(screenContentWrapperSource).toContain(
+      'notifyNativeScriptScreenContentWrapperHostReady',
+    );
+    expect(screenContentWrapperSource).toContain(
+      'onHostReady={handleHostReady}',
+    );
+    expect(stackSource).toContain(
+      'export function notifyNativeScriptScreenContentWrapperHostReady',
+    );
+    expect(stackSource).toContain('refreshUIKitHostViewHandle');
+    expect(stackSource).toContain(
+      'scheduledReconcileStack(stackId, registry, ctx, true);',
+    );
   });
 
   it('refreshes hosted UIKit views across modal and native gesture transitions', () => {
+    const completeModalSource = stackSource.slice(
+      stackSource.indexOf('function completeModalTransitionTransaction'),
+      stackSource.indexOf(
+        'function completeNativePresentedModalDismissalForController',
+      ),
+    );
+
     expect(stackSource).toContain(
       'function refreshNavigationControllerHostedViews',
     );
@@ -2965,7 +3376,15 @@ describe('NativeScript ScreenStack port', () => {
     expect(stackSource).toContain(
       'navigationController.view.userInteractionEnabled = true',
     );
-    expect(stackSource).toContain('layoutHostedReactSubviews(controller);');
+    expect(stackSource).toContain(
+      'function layoutHostedReactSubviewsForControllerHierarchy',
+    );
+    expect(completeModalSource).toContain(
+      'layoutPresentedModalControllers(stackId, registry);',
+    );
+    expect(completeModalSource).toContain(
+      'refreshRegisteredScreenContentWrapperHosts(registry);',
+    );
   });
 
   it('keeps a JS-removed screen mounted as inactive until UIKit finishes closing it', () => {
@@ -3004,6 +3423,7 @@ describe('NativeScript ScreenStack port', () => {
     expect(stackSource).toContain('setViewToSnapshot()');
     expect(stackSource).toContain('snapshotViewAfterScreenUpdates');
     expect(stackSource).toContain('props?.snapshotAfterUpdates === true');
+    expect(stackSource).toContain('snapshot.userInteractionEnabled = false');
     expect(stackSource).toContain('this.view = snapshot');
     expect(stackSource).toContain('controller.setViewToSnapshot?.();');
   });

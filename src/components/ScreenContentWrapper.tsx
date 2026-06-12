@@ -5,6 +5,7 @@ import ScreenContentWrapperNativeComponent from '../fabric/ScreenContentWrapperN
 import {
   NativeScriptScreenHeaderSubviewContext,
   notifyNativeScriptScreenContentWrapperFrame,
+  notifyNativeScriptScreenContentWrapperHostReady,
 } from './native-stack/native-script/NativeScriptScreenStack';
 
 type NativeScriptScreenContentWrapperHostProps = ViewProps & {
@@ -46,16 +47,26 @@ function layoutNativeScriptScreenContentWrapper(
     return;
   }
 
-  rootView.userInteractionEnabled = true;
-  childrenView.userInteractionEnabled = true;
-  childrenView.frame = rootView.bounds;
-  childrenView.autoresizingMask = flexibleSizeMask();
-  NativeScriptRuntime.refreshUIKitHostView(rootView);
-  notifyNativeScriptScreenContentWrapperFrame(
-    props.screenId,
-    rootView.frame,
-    childrenView,
-  );
+  const refresh = () => {
+    'worklet';
+    rootView.userInteractionEnabled = true;
+    childrenView.userInteractionEnabled = true;
+    if (childrenView !== rootView) {
+      childrenView.frame = rootView.bounds;
+      childrenView.autoresizingMask = flexibleSizeMask();
+    }
+    NativeScriptRuntime.refreshUIKitHostView(childrenView);
+    if (childrenView !== rootView) {
+      NativeScriptRuntime.refreshUIKitHostView(rootView);
+    }
+    notifyNativeScriptScreenContentWrapperFrame(
+      props.screenId,
+      rootView.frame,
+      childrenView,
+    );
+  };
+
+  refresh();
 }
 
 const NativeScriptScreenContentWrapperHost =
@@ -80,13 +91,10 @@ const NativeScriptScreenContentWrapperHost =
       }
 
       const rootView = UIView.alloc().init();
-      const childrenView = UIView.alloc().init();
+      const childrenView = rootView;
 
       rootView.backgroundColor = UIColor?.clearColor ?? null;
       rootView.userInteractionEnabled = true;
-      childrenView.backgroundColor = UIColor?.clearColor ?? null;
-      childrenView.userInteractionEnabled = true;
-      rootView.addSubview(childrenView);
 
       return { childrenView, rootView };
     },
@@ -105,6 +113,25 @@ const ScreenContentWrapper = React.forwardRef<View, ViewProps>(
     const screenContext = React.useContext(
       NativeScriptScreenHeaderSubviewContext,
     );
+    const screenId = screenContext?.screenId;
+    const handleHostReady = React.useCallback(
+      (event: {
+        nativeEvent?: {
+          childrenViewHandle?: string | undefined;
+          hasChildren?: boolean | undefined;
+        };
+      }) => {
+        if (event.nativeEvent?.hasChildren !== true) {
+          return;
+        }
+
+        notifyNativeScriptScreenContentWrapperHostReady(
+          screenId,
+          event.nativeEvent.childrenViewHandle,
+        ).catch(() => undefined);
+      },
+      [screenId],
+    );
 
     if (Platform.OS === 'ios') {
       return (
@@ -114,7 +141,8 @@ const ScreenContentWrapper = React.forwardRef<View, ViewProps>(
           attachController={false}
           attachNativeView
           collapsable={false}
-          screenId={screenContext?.screenId}
+          onHostReady={handleHostReady}
+          screenId={screenId}
         />
       );
     }
