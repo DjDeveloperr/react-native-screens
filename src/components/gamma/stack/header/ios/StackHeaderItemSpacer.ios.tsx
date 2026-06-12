@@ -1,20 +1,3 @@
-import React from 'react';
-import StackHeaderItemSpacerIOSNativeComponent from '../../../../../fabric/gamma/stack/StackHeaderItemSpacerIOSNativeComponent';
-import type { StackHeaderItemSpacerProps } from './StackHeaderItemSpacer.ios.types';
-import { StyleSheet } from 'react-native';
+import { NativeScriptGammaStackHeaderItemSpacer } from '../../native-script/NativeScriptGammaStack.ios';
 
-export default function StackHeaderItemSpacer(
-  props: StackHeaderItemSpacerProps,
-) {
-  return (
-    <StackHeaderItemSpacerIOSNativeComponent {...props} style={styles.config} />
-  );
-}
-
-const styles = StyleSheet.create({
-  config: {
-    position: 'absolute',
-    left: 0,
-    top: 0,
-  },
-});
+export default NativeScriptGammaStackHeaderItemSpacer;

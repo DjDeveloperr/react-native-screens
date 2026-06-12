@@ -4,6 +4,24 @@ import { StyleSheet, type ViewProps } from 'react-native';
 import NativeScriptRuntime from '@nativescript/react-native';
 import type { StackHostProps } from '../host/StackHost.types';
 import type { StackScreenProps } from '../screen/StackScreen.types';
+import type {
+  StackHeaderConfigProps,
+  StackHeaderConfigPropsBase,
+} from '../header/StackHeaderConfig.types';
+import type {
+  StackHeaderInlineCustomItemIOS,
+  StackHeaderInlineItemIOS,
+  StackHeaderSpacerItemIOS,
+  StackHeaderTitleCustomItemIOS,
+} from '../header/StackHeaderConfig.ios.types';
+import type {
+  StackHeaderItemPlacement,
+  StackHeaderItemProps,
+} from '../header/ios/StackHeaderItem.ios.types';
+import type {
+  StackHeaderItemSpacerPlacement,
+  StackHeaderItemSpacerProps,
+} from '../header/ios/StackHeaderItemSpacer.ios.types';
 
 type NativeScriptGammaStackHostProps = {
   children?: React.ReactNode;
@@ -25,10 +43,47 @@ type GammaStackRuntimeContextValue = {
   hostId: string;
 };
 
+type GammaStackScreenRuntimeContextValue = {
+  hostId: string;
+  screenKey: string;
+};
+
+type NativeScriptGammaStackHeaderConfigProps = StackHeaderConfigPropsBase & {
+  children?: React.ReactNode;
+  configId: string;
+  hostId: string;
+  largeSubtitle?: string | undefined;
+  largeTitle?: string | undefined;
+  largeTitleEnabled?: boolean | undefined;
+  screenKey: string;
+  style?: ViewProps['style'];
+};
+
+type NativeScriptGammaStackHeaderItemProps = StackHeaderItemProps & {
+  children?: React.ReactNode;
+  configId?: string | undefined;
+  hasCustomView?: boolean | undefined;
+  itemId?: string | undefined;
+  order?: number | undefined;
+  style?: ViewProps['style'];
+};
+
+type NativeScriptGammaStackHeaderItemSpacerProps =
+  StackHeaderItemSpacerProps & {
+    configId?: string | undefined;
+    itemId?: string | undefined;
+    order?: number | undefined;
+    style?: ViewProps['style'];
+  };
+
 const GammaStackRuntimeContext =
   React.createContext<GammaStackRuntimeContextValue | null>(null);
 
+const GammaStackScreenRuntimeContext =
+  React.createContext<GammaStackScreenRuntimeContextValue | null>(null);
+
 const GAMMA_STACK_MOUNT_VIEW_TAG = 83912042;
+const GAMMA_STACK_HEADER_STAGING_VIEW_TAG = 83912043;
 const GAMMA_STACK_NAVIGATION_CONTROLLER_CLASS_KEY =
   '__rnsGammaStackNavigationControllerNativeScriptClass';
 const GAMMA_STACK_SCREEN_CONTROLLER_CLASS_KEY =
@@ -75,6 +130,39 @@ function nativeArrayFromArray(items: any[]): any {
   return NSArray && typeof NSArray.arrayWithArray === 'function'
     ? NSArray.arrayWithArray(items)
     : items;
+}
+
+function gammaStackLargeTitleDisplayMode(enabled: boolean) {
+  'worklet';
+  const enumValue = nativeValue('UINavigationItemLargeTitleDisplayMode');
+
+  return enabled
+    ? enumValue?.Always ?? enumValue?.always ?? 1
+    : enumValue?.Never ?? enumValue?.never ?? 2;
+}
+
+function gammaStackPlainBarButtonStyle() {
+  'worklet';
+  const style = nativeValue('UIBarButtonItemStyle');
+
+  return style?.Plain ?? style?.plain ?? 0;
+}
+
+function nilIfEmpty(value: unknown): string | null {
+  'worklet';
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function createGammaStackUIView() {
+  'worklet';
+  const UIView = nativeValue('UIView');
+  if (!UIView || typeof UIView.alloc !== 'function') {
+    return null;
+  }
+  const allocated = UIView.alloc();
+  return allocated && typeof allocated.init === 'function'
+    ? allocated.init()
+    : allocated;
 }
 
 function navigationControllerContainsController(
@@ -390,13 +478,553 @@ function ensureGammaStackRegistry() {
   'worklet';
   const globalObject = globalThis as Record<string, any>;
   const registry = globalObject.__rnsNativeScriptGammaStackRegistry ?? {
+    headerConfigs: {},
+    headerItems: {},
     hosts: {},
     screens: {},
   };
+  registry.headerConfigs = registry.headerConfigs ?? {};
+  registry.headerItems = registry.headerItems ?? {};
   registry.hosts = registry.hosts ?? {};
   registry.screens = registry.screens ?? {};
   globalObject.__rnsNativeScriptGammaStackRegistry = registry;
   return registry;
+}
+
+function setGammaStackNativePropertyIfPresent(
+  object: any,
+  property: string,
+  value: any,
+) {
+  'worklet';
+  if (!object) {
+    return;
+  }
+
+  try {
+    if (property in object || value != null) {
+      object[property] = value;
+    }
+  } catch {
+    // Older iOS UINavigationItem instances do not expose the iOS 26 title
+    // adjunct properties; upstream guards them with @available.
+  }
+}
+
+function setGammaStackNavigationBarHidden(
+  navigationController: any,
+  hidden: boolean,
+  animated: boolean,
+) {
+  'worklet';
+  if (!navigationController) {
+    return;
+  }
+
+  if (
+    typeof navigationController.setNavigationBarHiddenAnimated === 'function'
+  ) {
+    navigationController.setNavigationBarHiddenAnimated(hidden, animated);
+  } else if (
+    typeof navigationController.setNavigationBarHidden === 'function'
+  ) {
+    navigationController.setNavigationBarHidden(hidden, animated);
+  }
+
+  navigationController.navigationBarHidden = hidden;
+  if (navigationController.navigationBar) {
+    navigationController.navigationBar.hidden = hidden;
+  }
+}
+
+function setGammaStackBarButtonItems(
+  navigationItem: any,
+  side: 'left' | 'right',
+  items: any[],
+) {
+  'worklet';
+  const nativeItems = nativeArrayFromArray(items);
+  if (
+    side === 'left' &&
+    typeof navigationItem.setLeftBarButtonItemsAnimated === 'function'
+  ) {
+    navigationItem.setLeftBarButtonItemsAnimated(nativeItems, true);
+    return;
+  }
+  if (
+    side === 'right' &&
+    typeof navigationItem.setRightBarButtonItemsAnimated === 'function'
+  ) {
+    navigationItem.setRightBarButtonItemsAnimated(nativeItems, true);
+    return;
+  }
+
+  if (side === 'left') {
+    navigationItem.leftBarButtonItems = nativeItems;
+  } else {
+    navigationItem.rightBarButtonItems = nativeItems;
+  }
+}
+
+function makeGammaStackHeaderWrappedView(record: any) {
+  'worklet';
+  const rootView = record?.rootView;
+  if (!rootView) {
+    return null;
+  }
+
+  const wrapper = createGammaStackUIView();
+  if (!wrapper) {
+    return rootView;
+  }
+
+  const UIColor = nativeValue('UIColor');
+  wrapper.backgroundColor = UIColor?.clearColor ?? null;
+  wrapper.userInteractionEnabled = true;
+  wrapper.autoresizingMask = flexibleSizeMask();
+  wrapper.__rnsGammaStackHeaderItemView = rootView;
+
+  if (rootView.frame) {
+    wrapper.frame = rootView.frame;
+  }
+  if (rootView.bounds) {
+    wrapper.bounds = rootView.bounds;
+  }
+
+  rootView.hidden = false;
+  rootView.userInteractionEnabled = true;
+  rootView.autoresizingMask = flexibleSizeMask();
+  if (typeof rootView.removeFromSuperview === 'function') {
+    rootView.removeFromSuperview();
+  }
+  if (typeof wrapper.addSubview === 'function') {
+    wrapper.addSubview(rootView);
+  }
+
+  return wrapper;
+}
+
+function makeGammaStackHeaderBarButtonItem(record: any) {
+  'worklet';
+  const UIBarButtonItem = nativeValue('UIBarButtonItem');
+  if (!UIBarButtonItem) {
+    return null;
+  }
+
+  if (record?.kind === 'spacer') {
+    if (
+      record.sizing === 'flexible' &&
+      typeof UIBarButtonItem.flexibleSpaceItem === 'function'
+    ) {
+      return UIBarButtonItem.flexibleSpaceItem();
+    }
+
+    const width = typeof record.width === 'number' ? record.width : 0;
+    if (typeof UIBarButtonItem.fixedSpaceItemOfWidth === 'function') {
+      return UIBarButtonItem.fixedSpaceItemOfWidth(width);
+    }
+
+    if (typeof UIBarButtonItem.alloc !== 'function') {
+      return null;
+    }
+    const allocated = UIBarButtonItem.alloc();
+    const item =
+      allocated && typeof allocated.init === 'function'
+        ? allocated.init()
+        : allocated;
+    if (item) {
+      item.width = width;
+    }
+    return item;
+  }
+
+  if (!record) {
+    return null;
+  }
+
+  if (record.hasCustomView === true) {
+    const wrapper = makeGammaStackHeaderWrappedView(record);
+    if (!wrapper || typeof UIBarButtonItem.alloc !== 'function') {
+      return null;
+    }
+    const allocated = UIBarButtonItem.alloc();
+    const item =
+      allocated && typeof allocated.initWithCustomView === 'function'
+        ? allocated.initWithCustomView(wrapper)
+        : allocated && typeof allocated.init === 'function'
+        ? allocated.init()
+        : allocated;
+    if (item) {
+      item.customView = wrapper;
+    }
+    return item;
+  }
+
+  if (typeof UIBarButtonItem.alloc !== 'function') {
+    return null;
+  }
+
+  const allocated = UIBarButtonItem.alloc();
+  const item =
+    allocated && typeof allocated.initWithTitleStyleTargetAction === 'function'
+      ? allocated.initWithTitleStyleTargetAction(
+          record.label ?? '',
+          gammaStackPlainBarButtonStyle(),
+          null,
+          null,
+        )
+      : allocated && typeof allocated.init === 'function'
+      ? allocated.init()
+      : allocated;
+
+  if (item) {
+    item.title = record.label ?? '';
+    item.style = gammaStackPlainBarButtonStyle();
+  }
+
+  return item;
+}
+
+function makeGammaStackHeaderTitleView(record: any) {
+  'worklet';
+  return record?.kind === 'item' && record.hasCustomView === true
+    ? makeGammaStackHeaderWrappedView(record)
+    : null;
+}
+
+function orderedGammaStackHeaderChildren(config: any, registry: any) {
+  'worklet';
+  const records: any[] = [];
+  const childIds = config?.childIds ?? [];
+  for (let index = 0; index < childIds.length; index += 1) {
+    const record = registry.headerItems?.[childIds[index]];
+    if (record && record.configId === config.configId) {
+      records[records.length] = record;
+    }
+  }
+
+  records.sort((left, right) => (left.order ?? 0) - (right.order ?? 0));
+  return records;
+}
+
+function buildGammaStackHeaderData(config: any, registry: any) {
+  'worklet';
+  const leadingBarButtonItems: any[] = [];
+  const trailingBarButtonItems: any[] = [];
+  let titleView: any = null;
+  let subtitleView: any = null;
+  let largeSubtitleView: any = null;
+  const children = orderedGammaStackHeaderChildren(config, registry);
+
+  for (let index = 0; index < children.length; index += 1) {
+    const child = children[index];
+    if (child.placement === 'leading') {
+      const barItem = makeGammaStackHeaderBarButtonItem(child);
+      if (barItem) {
+        leadingBarButtonItems[leadingBarButtonItems.length] = barItem;
+      }
+    } else if (child.placement === 'trailing') {
+      const barItem = makeGammaStackHeaderBarButtonItem(child);
+      if (barItem) {
+        trailingBarButtonItems[trailingBarButtonItems.length] = barItem;
+      }
+    } else if (child.placement === 'title') {
+      titleView = makeGammaStackHeaderTitleView(child) ?? titleView;
+    } else if (child.placement === 'subtitle') {
+      subtitleView = makeGammaStackHeaderTitleView(child) ?? subtitleView;
+    } else if (child.placement === 'largeSubtitle') {
+      largeSubtitleView =
+        makeGammaStackHeaderTitleView(child) ?? largeSubtitleView;
+    }
+  }
+
+  return {
+    hidden: config.hidden === true,
+    largeSubtitle: nilIfEmpty(config.largeSubtitle),
+    largeSubtitleView,
+    largeTitle: nilIfEmpty(config.largeTitle),
+    largeTitleEnabled: config.largeTitleEnabled === true,
+    leadingBarButtonItems,
+    subtitle: nilIfEmpty(config.subtitle),
+    subtitleView,
+    title: nilIfEmpty(config.title),
+    titleView,
+    trailingBarButtonItems,
+  };
+}
+
+function applyGammaStackHeaderData(record: any, data: any, registry?: any) {
+  'worklet';
+  const controller = record?.controller;
+  const navigationItem = controller?.navigationItem;
+  if (!navigationItem) {
+    return;
+  }
+
+  // Direct port of RNSStackNavigationItemCoordinator.applyToController:
+  // the TS port writes the same UINavigationItem fields and keeps UIKit's
+  // animated bar button updates.
+  navigationItem.titleView = data.titleView ?? null;
+  navigationItem.title = data.title ?? null;
+  setGammaStackNativePropertyIfPresent(
+    navigationItem,
+    'largeTitle',
+    data.largeTitle ?? null,
+  );
+  setGammaStackNativePropertyIfPresent(
+    navigationItem,
+    'subtitle',
+    data.subtitle ?? null,
+  );
+  setGammaStackNativePropertyIfPresent(
+    navigationItem,
+    'largeSubtitle',
+    data.largeSubtitle ?? null,
+  );
+  setGammaStackNativePropertyIfPresent(
+    navigationItem,
+    'subtitleView',
+    data.subtitleView ?? null,
+  );
+  setGammaStackNativePropertyIfPresent(
+    navigationItem,
+    'largeSubtitleView',
+    data.largeSubtitleView ?? null,
+  );
+  navigationItem.largeTitleDisplayMode = gammaStackLargeTitleDisplayMode(
+    data.largeTitleEnabled === true,
+  );
+  navigationItem.leftItemsSupplementBackButton = true;
+  setGammaStackBarButtonItems(
+    navigationItem,
+    'left',
+    data.leadingBarButtonItems ?? [],
+  );
+  setGammaStackBarButtonItems(
+    navigationItem,
+    'right',
+    data.trailingBarButtonItems ?? [],
+  );
+
+  const sourceRegistry =
+    registry ??
+    (globalThis as Record<string, any>).__rnsNativeScriptGammaStackRegistry;
+  const navigationController =
+    controller.navigationController ??
+    sourceRegistry?.hosts?.[record.hostId]?.controller;
+  setGammaStackNavigationBarHidden(
+    navigationController,
+    data.hidden === true,
+    true,
+  );
+}
+
+function submitGammaStackHeaderConfig(configId: string) {
+  'worklet';
+  const registry = (globalThis as Record<string, any>)
+    .__rnsNativeScriptGammaStackRegistry;
+  const config = registry?.headerConfigs?.[configId];
+  const screen = config ? registry?.screens?.[config.screenKey] : null;
+  if (!config || !screen) {
+    return;
+  }
+
+  const data = buildGammaStackHeaderData(config, registry);
+  screen.headerData = data;
+  applyGammaStackHeaderData(screen, data, registry);
+}
+
+function scheduleGammaStackHeaderSubmit(configId: string | undefined) {
+  'worklet';
+  if (!configId) {
+    return;
+  }
+
+  submitGammaStackHeaderConfig(configId);
+
+  if (typeof setTimeout !== 'function') {
+    return;
+  }
+
+  const registry = ensureGammaStackRegistry();
+  const config = registry.headerConfigs?.[configId];
+  if (!config) {
+    return;
+  }
+
+  const token = (config.submitToken ?? 0) + 1;
+  config.submitToken = token;
+  setTimeout(
+    (targetConfigId: string, targetToken: number) => {
+      'worklet';
+      const targetRegistry = (globalThis as Record<string, any>)
+        .__rnsNativeScriptGammaStackRegistry;
+      const targetConfig = targetRegistry?.headerConfigs?.[targetConfigId];
+      if (!targetConfig || targetConfig.submitToken !== targetToken) {
+        return;
+      }
+      submitGammaStackHeaderConfig(targetConfigId);
+    },
+    0,
+    configId,
+    token,
+  );
+}
+
+function submitGammaStackHeaderConfigsForScreen(screenKey: string) {
+  'worklet';
+  const registry = (globalThis as Record<string, any>)
+    .__rnsNativeScriptGammaStackRegistry;
+  const configs = registry?.headerConfigs;
+  if (!configs) {
+    return;
+  }
+
+  const keys = Object.keys(configs);
+  for (let index = 0; index < keys.length; index += 1) {
+    const config = configs[keys[index]];
+    if (config?.screenKey === screenKey) {
+      scheduleGammaStackHeaderSubmit(config.configId);
+    }
+  }
+}
+
+function upsertGammaStackHeaderConfigRecord(view: any, props: any) {
+  'worklet';
+  const registry = ensureGammaStackRegistry();
+  const existing = registry.headerConfigs[props.configId];
+  const config =
+    existing ??
+    ({
+      childIds: [],
+      configId: props.configId,
+    } as any);
+
+  Object.assign(config, {
+    hidden: props.hidden === true,
+    hostId: props.hostId,
+    largeSubtitle: props.largeSubtitle,
+    largeTitle: props.largeTitle,
+    largeTitleEnabled: props.largeTitleEnabled === true,
+    rootView: view?.rootView ?? view,
+    screenKey: props.screenKey,
+    subtitle: props.subtitle,
+    title: props.title,
+  });
+
+  registry.headerConfigs[props.configId] = config;
+  scheduleGammaStackHeaderSubmit(props.configId);
+}
+
+function removeGammaStackHeaderConfigRecord(props: any) {
+  'worklet';
+  const registry = (globalThis as Record<string, any>)
+    .__rnsNativeScriptGammaStackRegistry;
+  const config = registry?.headerConfigs?.[props.configId];
+  if (!config) {
+    return;
+  }
+
+  const screen = registry?.screens?.[config.screenKey];
+  if (screen) {
+    const emptyData = buildGammaStackHeaderData(
+      {
+        childIds: [],
+        hidden: false,
+        largeTitleEnabled: false,
+      },
+      registry,
+    );
+    screen.headerData = undefined;
+    applyGammaStackHeaderData(screen, emptyData, registry);
+  }
+
+  registry.headerConfigs[props.configId] = undefined;
+}
+
+function registerGammaStackHeaderChild(config: any, itemId: string) {
+  'worklet';
+  const childIds = config.childIds ?? [];
+  for (let index = 0; index < childIds.length; index += 1) {
+    if (childIds[index] === itemId) {
+      config.childIds = childIds;
+      return;
+    }
+  }
+  childIds[childIds.length] = itemId;
+  config.childIds = childIds;
+}
+
+function unregisterGammaStackHeaderChild(config: any, itemId: string) {
+  'worklet';
+  const childIds = config?.childIds ?? [];
+  for (let index = childIds.length - 1; index >= 0; index -= 1) {
+    if (childIds[index] === itemId) {
+      for (
+        let moveIndex = index;
+        moveIndex < childIds.length - 1;
+        moveIndex += 1
+      ) {
+        childIds[moveIndex] = childIds[moveIndex + 1];
+      }
+      childIds.length = childIds.length - 1;
+    }
+  }
+  if (config) {
+    config.childIds = childIds;
+  }
+}
+
+function upsertGammaStackHeaderItemRecord(
+  view: any,
+  props: any,
+  kind: 'item' | 'spacer',
+) {
+  'worklet';
+  if (!props.configId || !props.itemId) {
+    return;
+  }
+
+  const registry = ensureGammaStackRegistry();
+  const config =
+    registry.headerConfigs[props.configId] ??
+    ({
+      childIds: [],
+      configId: props.configId,
+    } as any);
+  registry.headerConfigs[props.configId] = config;
+  registerGammaStackHeaderChild(config, props.itemId);
+
+  registry.headerItems[props.itemId] = {
+    configId: props.configId,
+    hasCustomView: props.hasCustomView === true,
+    itemId: props.itemId,
+    kind,
+    label: props.label,
+    order: props.order ?? 0,
+    placement: props.placement,
+    rootView: view?.rootView ?? view,
+    sizing: props.sizing,
+    width: props.width,
+  };
+
+  scheduleGammaStackHeaderSubmit(props.configId);
+}
+
+function removeGammaStackHeaderItemRecord(props: any) {
+  'worklet';
+  if (!props.configId || !props.itemId) {
+    return;
+  }
+
+  const registry = (globalThis as Record<string, any>)
+    .__rnsNativeScriptGammaStackRegistry;
+  const config = registry?.headerConfigs?.[props.configId];
+  unregisterGammaStackHeaderChild(config, props.itemId);
+  if (registry?.headerItems) {
+    registry.headerItems[props.itemId] = undefined;
+  }
+  scheduleGammaStackHeaderSubmit(props.configId);
 }
 
 function enqueueGammaStackOperation(
@@ -443,6 +1071,8 @@ function upsertGammaStackScreenRecord(
     activityMode,
     controller,
     ctx,
+    headerData: previous?.headerData,
+    hostId: props.hostId,
     index: props.__nativeScriptGammaStackIndex ?? 0,
     isNativelyDismissed: previous?.isNativelyDismissed === true,
     preventNativeDismiss: props.preventNativeDismiss === true,
@@ -458,6 +1088,10 @@ function upsertGammaStackScreenRecord(
     host.screens[existingIndex] = record;
   } else {
     host.screens[host.screens.length] = record;
+  }
+
+  if (record.headerData) {
+    applyGammaStackHeaderData(record, record.headerData);
   }
 
   if (!previous && activityMode === 'attached') {
@@ -587,6 +1221,9 @@ function commitGammaStackOperations(host: any) {
       continue;
     }
     record.controller.__rnsGammaStackActivityMode = record.activityMode;
+    if (record.headerData) {
+      applyGammaStackHeaderData(record, record.headerData);
+    }
     if (typeof navigationController.pushViewControllerAnimated === 'function') {
       navigationController.pushViewControllerAnimated(record.controller, true);
     } else {
@@ -601,6 +1238,9 @@ function commitGammaStackOperations(host: any) {
       viewControllers[viewControllers.length] = record.controller;
       navigationController.viewControllers =
         nativeArrayFromArray(viewControllers);
+    }
+    if (record.headerData) {
+      applyGammaStackHeaderData(record, record.headerData);
     }
   }
 
@@ -802,6 +1442,7 @@ const GammaStackScreenController = NativeScriptRuntime.defineUIViewController<
     registry.hosts[props.hostId] = host;
     const record = upsertGammaStackScreenRecord(host, controller, props, ctx);
     registry.screens[props.screenKey] = record;
+    submitGammaStackHeaderConfigsForScreen(props.screenKey);
     scheduleGammaStackCommit(props.hostId);
   },
   update(controller: any, props: any, _previousProps: any, ctx: any) {
@@ -816,6 +1457,7 @@ const GammaStackScreenController = NativeScriptRuntime.defineUIViewController<
     registry.hosts[props.hostId] = host;
     const record = upsertGammaStackScreenRecord(host, controller, props, ctx);
     registry.screens[props.screenKey] = record;
+    submitGammaStackHeaderConfigsForScreen(props.screenKey);
     scheduleGammaStackCommit(props.hostId);
   },
   dispose(controller: any, props: any) {
@@ -832,6 +1474,313 @@ const GammaStackScreenController = NativeScriptRuntime.defineUIViewController<
     }
   },
 });
+
+const GammaStackHeaderConfigContainer =
+  NativeScriptRuntime.defineUIKitContainer<
+    NativeScriptGammaStackHeaderConfigProps,
+    any,
+    any
+  >({
+    debugName: 'RNSStackHeaderConfigIOS.NativeScript',
+    layout: { sizing: 'fill' },
+    create() {
+      'worklet';
+      const rootView = createGammaStackUIView();
+      if (!rootView) {
+        throw new Error('UIView is not available');
+      }
+
+      rootView.tag = GAMMA_STACK_HEADER_STAGING_VIEW_TAG;
+      rootView.hidden = true;
+      rootView.userInteractionEnabled = false;
+      rootView.autoresizingMask = flexibleSizeMask();
+
+      // NATIVESCRIPT_PORT_DEVIATION: upstream RNSStackHeaderConfig keeps
+      // header item component views as Fabric children without inserting them
+      // into a visible hierarchy. NativeScript still needs a native mount
+      // parent for React children before UIKit wraps custom item views into
+      // UIBarButtonItem customView instances, so this hidden staging view is
+      // runtime plumbing only.
+      return {
+        childrenView: rootView,
+        rootView,
+      };
+    },
+    mounted(view: any, props: any) {
+      'worklet';
+      upsertGammaStackHeaderConfigRecord(view, props);
+    },
+    update(view: any, props: any) {
+      'worklet';
+      upsertGammaStackHeaderConfigRecord(view, props);
+    },
+    dispose(_view: any, props: any) {
+      'worklet';
+      removeGammaStackHeaderConfigRecord(props);
+    },
+  });
+
+const GammaStackHeaderItemContainer = NativeScriptRuntime.defineUIKitContainer<
+  NativeScriptGammaStackHeaderItemProps,
+  any,
+  any
+>({
+  debugName: 'RNSStackHeaderItemIOS.NativeScript',
+  layout: { sizing: 'intrinsic' },
+  create() {
+    'worklet';
+    const rootView = createGammaStackUIView();
+    if (!rootView) {
+      throw new Error('UIView is not available');
+    }
+
+    rootView.userInteractionEnabled = true;
+    rootView.autoresizingMask = flexibleSizeMask();
+
+    return {
+      childrenView: rootView,
+      rootView,
+    };
+  },
+  mounted(view: any, props: any) {
+    'worklet';
+    upsertGammaStackHeaderItemRecord(view, props, 'item');
+  },
+  update(view: any, props: any) {
+    'worklet';
+    upsertGammaStackHeaderItemRecord(view, props, 'item');
+  },
+  dispose(_view: any, props: any) {
+    'worklet';
+    removeGammaStackHeaderItemRecord(props);
+  },
+});
+
+const GammaStackHeaderItemSpacerContainer =
+  NativeScriptRuntime.defineUIKitContainer<
+    NativeScriptGammaStackHeaderItemSpacerProps,
+    any,
+    any
+  >({
+    debugName: 'RNSStackHeaderItemSpacerIOS.NativeScript',
+    layout: { sizing: 'intrinsic' },
+    create() {
+      'worklet';
+      const rootView = createGammaStackUIView();
+      if (!rootView) {
+        throw new Error('UIView is not available');
+      }
+
+      rootView.hidden = true;
+      rootView.userInteractionEnabled = false;
+
+      return {
+        childrenView: rootView,
+        rootView,
+      };
+    },
+    mounted(view: any, props: any) {
+      'worklet';
+      upsertGammaStackHeaderItemRecord(view, props, 'spacer');
+    },
+    update(view: any, props: any) {
+      'worklet';
+      upsertGammaStackHeaderItemRecord(view, props, 'spacer');
+    },
+    dispose(_view: any, props: any) {
+      'worklet';
+      removeGammaStackHeaderItemRecord(props);
+    },
+  });
+
+function gammaStackHeaderChildId(
+  configId: string,
+  placement: StackHeaderItemPlacement,
+  key: string | undefined,
+  order: number,
+) {
+  return `${configId}:${placement}:${key ?? order}`;
+}
+
+function makeGammaStackHeaderItemView(
+  item:
+    | StackHeaderInlineItemIOS
+    | StackHeaderInlineCustomItemIOS
+    | StackHeaderTitleCustomItemIOS
+    | StackHeaderSpacerItemIOS,
+  placement: StackHeaderItemPlacement,
+  configId: string,
+  order: number,
+) {
+  if ('type' in item && item.type === 'spacer') {
+    let spacerPlacement: StackHeaderItemSpacerPlacement = 'trailing';
+    if (placement === 'leading' || placement === 'trailing') {
+      spacerPlacement = placement;
+    } else {
+      console.warn(
+        `[Stack] Invalid placement for spacer: "${placement}", defaulting to "trailing"`,
+      );
+    }
+
+    return (
+      <NativeScriptGammaStackHeaderItemSpacer
+        key={item.key}
+        configId={configId}
+        itemId={gammaStackHeaderChildId(
+          configId,
+          spacerPlacement,
+          item.key,
+          order,
+        )}
+        order={order}
+        placement={spacerPlacement}
+        sizing={item.sizing}
+        width={'width' in item ? item.width : undefined}
+      />
+    );
+  }
+
+  const hasCustomView = 'render' in item;
+
+  return (
+    <NativeScriptGammaStackHeaderItem
+      key={item.key}
+      configId={configId}
+      hasCustomView={hasCustomView}
+      itemId={gammaStackHeaderChildId(configId, placement, item.key, order)}
+      label={'label' in item ? item.label : undefined}
+      order={order}
+      placement={placement}
+      render={hasCustomView ? item.render : undefined}
+    />
+  );
+}
+
+export function NativeScriptGammaStackHeaderConfig(
+  props: StackHeaderConfigProps,
+) {
+  const screenContext = React.useContext(GammaStackScreenRuntimeContext);
+  const configId = React.useId();
+
+  if (!screenContext) {
+    return null;
+  }
+
+  const { ios } = props;
+  const restProps = {
+    backButtonHidden: props.backButtonHidden,
+    hidden: props.hidden,
+    subtitle: props.subtitle,
+    title: props.title,
+    transparent: props.transparent,
+  };
+  const {
+    leadingItems,
+    trailingItems,
+    titleItem,
+    subtitleItem,
+    largeSubtitleItem,
+    largeTitle,
+    largeSubtitle,
+    largeTitleEnabled,
+  } = ios ?? {};
+
+  const children: React.ReactElement[] = [];
+  let order = 0;
+
+  for (const item of leadingItems ?? []) {
+    children[children.length] = makeGammaStackHeaderItemView(
+      item,
+      'leading',
+      configId,
+      order,
+    );
+    order += 1;
+  }
+  if (titleItem) {
+    children[children.length] = makeGammaStackHeaderItemView(
+      titleItem,
+      'title',
+      configId,
+      order,
+    );
+    order += 1;
+  }
+  if (subtitleItem) {
+    children[children.length] = makeGammaStackHeaderItemView(
+      subtitleItem,
+      'subtitle',
+      configId,
+      order,
+    );
+    order += 1;
+  }
+  if (largeSubtitleItem) {
+    children[children.length] = makeGammaStackHeaderItemView(
+      largeSubtitleItem,
+      'largeSubtitle',
+      configId,
+      order,
+    );
+    order += 1;
+  }
+  for (const item of trailingItems ?? []) {
+    children[children.length] = makeGammaStackHeaderItemView(
+      item,
+      'trailing',
+      configId,
+      order,
+    );
+    order += 1;
+  }
+
+  return (
+    <GammaStackHeaderConfigContainer
+      {...restProps}
+      configId={configId}
+      hostId={screenContext.hostId}
+      largeSubtitle={largeSubtitle}
+      largeTitle={largeTitle}
+      largeTitleEnabled={!!largeTitleEnabled}
+      screenKey={screenContext.screenKey}
+      style={styles.headerStaging}>
+      {children}
+    </GammaStackHeaderConfigContainer>
+  );
+}
+
+export function NativeScriptGammaStackHeaderItem(
+  props: NativeScriptGammaStackHeaderItemProps,
+) {
+  const generatedItemId = React.useId();
+  const { children, configId, hasCustomView, itemId, render, ...restProps } =
+    props;
+  const renderedChildren = children ?? render?.();
+
+  return (
+    <GammaStackHeaderItemContainer
+      {...restProps}
+      configId={configId}
+      hasCustomView={hasCustomView ?? renderedChildren != null}
+      itemId={itemId ?? generatedItemId}
+      style={styles.headerStaging}>
+      {renderedChildren}
+    </GammaStackHeaderItemContainer>
+  );
+}
+
+export function NativeScriptGammaStackHeaderItemSpacer(
+  props: NativeScriptGammaStackHeaderItemSpacerProps,
+) {
+  const generatedItemId = React.useId();
+  return (
+    <GammaStackHeaderItemSpacerContainer
+      {...props}
+      itemId={props.itemId ?? generatedItemId}
+      style={styles.headerStaging}
+    />
+  );
+}
 
 export function NativeScriptGammaStackHost(props: StackHostProps) {
   const hostId = React.useId();
@@ -855,7 +1804,13 @@ export function NativeScriptGammaStackHost(props: StackHostProps) {
 
 export function NativeScriptGammaStackScreen(props: StackScreenProps) {
   const context = React.useContext(GammaStackRuntimeContext);
-  const { onDismiss, onNativeDismiss, screenKey, ...nativeScriptProps } = props;
+  const {
+    children,
+    onDismiss,
+    onNativeDismiss,
+    screenKey,
+    ...nativeScriptProps
+  } = props;
 
   const onDismissWrapper = React.useCallback(
     (event: { nativeEvent: { isNativeDismiss: boolean } }) => {
@@ -873,21 +1828,30 @@ export function NativeScriptGammaStackScreen(props: StackScreenProps) {
   }
 
   return (
-    <GammaStackScreenController
-      {...nativeScriptProps}
-      hostId={context.hostId}
-      screenKey={screenKey}
-      attachController
-      attachControllerView={false}
-      attachNativeView={false}
-      onDismiss={onDismissWrapper}
-      style={StyleSheet.absoluteFill}
-    />
+    <GammaStackScreenRuntimeContext.Provider
+      value={{ hostId: context.hostId, screenKey }}>
+      <GammaStackScreenController
+        {...nativeScriptProps}
+        hostId={context.hostId}
+        screenKey={screenKey}
+        attachController
+        attachControllerView={false}
+        attachNativeView={false}
+        onDismiss={onDismissWrapper}
+        style={StyleSheet.absoluteFill}>
+        {children}
+      </GammaStackScreenController>
+    </GammaStackScreenRuntimeContext.Provider>
   );
 }
 
 const styles = StyleSheet.create({
   fill: {
     flex: 1,
+  },
+  headerStaging: {
+    left: 0,
+    position: 'absolute',
+    top: 0,
   },
 });
