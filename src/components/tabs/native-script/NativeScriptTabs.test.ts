@@ -575,6 +575,7 @@ describe('NativeScriptTabsHost', () => {
     });
     const selectedController = { view: makeView() };
     const tabController: any = {
+      traitOverrides: {},
       view: makeView(),
       tabBar: {
         ...makeView(),
@@ -1851,6 +1852,7 @@ describe('NativeScriptTabsHost', () => {
       layoutIfNeeded: jest.fn(),
     });
     const tabController: any = {
+      traitOverrides: {},
       view: makeView(),
       tabBar: {
         ...makeView(),
@@ -1870,6 +1872,11 @@ describe('NativeScriptTabsHost', () => {
       UITabBarMinimizeBehavior: {
         Never: 33,
       },
+      UITraitEnvironmentLayoutDirection: {
+        LeftToRight: 11,
+        RightToLeft: 22,
+        Unspecified: 0,
+      },
       UIView: {
         alloc: () => ({
           init: () => makeView(),
@@ -1884,7 +1891,7 @@ describe('NativeScriptTabsHost', () => {
         definition.debugName === 'RNSTabsHostIOS.NativeScript',
     );
 
-    hostDefinition.createController({
+    const controller = hostDefinition.createController({
       delegate: (
         _controller: unknown,
         _protocol: unknown,
@@ -1892,6 +1899,7 @@ describe('NativeScriptTabsHost', () => {
       ) => implementation,
       emit: jest.fn(),
       hostId: 'test-host',
+      layoutDirection: 'rtl',
       observe: jest.fn(),
       tabBarControllerMode: 'tabBar',
       tabBarMinimizeBehavior: 'never',
@@ -1899,6 +1907,23 @@ describe('NativeScriptTabsHost', () => {
 
     expect(tabController.mode).toBe(11);
     expect(tabController.tabBarMinimizeBehavior).toBe(33);
+    expect(tabController.traitOverrides.layoutDirection).toBe(22);
+
+    hostDefinition.update(
+      controller,
+      {
+        hostId: 'test-host',
+        layoutDirection: 'ltr',
+        navStateRequest: {
+          baseProvenance: 0,
+          selectedScreenKey: 'index',
+        },
+      },
+      {},
+      { emit: jest.fn() },
+    );
+
+    expect(tabController.traitOverrides.layoutDirection).toBe(11);
   });
 
   it('lets UITabBarController own the native tab bar frame during layout', () => {

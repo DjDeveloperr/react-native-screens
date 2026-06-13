@@ -204,6 +204,33 @@ function tabBarMinimizeBehaviorValue(
   return null;
 }
 
+function tabBarLayoutDirectionValue(direction: string | undefined): number {
+  'worklet';
+  const values = nativeValue('UITraitEnvironmentLayoutDirection');
+  if (direction === 'ltr') {
+    return (
+      values?.LeftToRight ??
+      values?.leftToRight ??
+      nativeValue('UITraitEnvironmentLayoutDirectionLeftToRight') ??
+      1
+    );
+  }
+  if (direction === 'rtl') {
+    return (
+      values?.RightToLeft ??
+      values?.rightToLeft ??
+      nativeValue('UITraitEnvironmentLayoutDirectionRightToLeft') ??
+      2
+    );
+  }
+  return (
+    values?.Unspecified ??
+    values?.unspecified ??
+    nativeValue('UITraitEnvironmentLayoutDirectionUnspecified') ??
+    0
+  );
+}
+
 function imageWithRenderingMode(
   image: any,
   modeName: string,
@@ -768,6 +795,7 @@ function configureTabBarController(controller: any, props: any) {
   const minimizeBehavior = tabBarMinimizeBehaviorValue(
     props.tabBarMinimizeBehavior,
   );
+  const layoutDirection = tabBarLayoutDirectionValue(props.layoutDirection);
   if (backgroundColor) {
     controller.view.backgroundColor = backgroundColor;
   }
@@ -779,6 +807,30 @@ function configureTabBarController(controller: any, props: any) {
   }
   if (minimizeBehavior != null) {
     controller.tabBarMinimizeBehavior = minimizeBehavior;
+  }
+  // Direct port of RNSTabsHostComponentView.setLayoutDirection: upstream
+  // applies layoutDirection through UITabBarController trait overrides so
+  // UIKit owns tab item mirroring for ltr/rtl/inherit.
+  if (controller.traitOverrides) {
+    controller.traitOverrides.layoutDirection = layoutDirection;
+  } else if (controller.parentViewController) {
+    const UITraitCollection = nativeValue('UITraitCollection');
+    const traitCollection =
+      UITraitCollection &&
+      typeof UITraitCollection.traitCollectionWithLayoutDirection ===
+        'function'
+        ? UITraitCollection.traitCollectionWithLayoutDirection(layoutDirection)
+        : null;
+    if (
+      traitCollection &&
+      typeof controller.parentViewController
+        .setOverrideTraitCollectionForChildViewController === 'function'
+    ) {
+      controller.parentViewController.setOverrideTraitCollectionForChildViewController(
+        traitCollection,
+        controller,
+      );
+    }
   }
 }
 
@@ -2844,6 +2896,7 @@ type TabsHostNativeScriptProps = {
   tabBarHidden?: boolean;
   tintColor?: unknown;
   backgroundColor?: unknown;
+  layoutDirection?: string;
   tabBarControllerMode?: string;
   tabBarMinimizeBehavior?: string;
   style?: unknown;
@@ -3795,6 +3848,9 @@ export function NativeScriptTabsHost(props: TabsHostProps) {
   if (props.ios?.tabBarMinimizeBehavior !== undefined) {
     hostControllerProps.tabBarMinimizeBehavior =
       props.ios.tabBarMinimizeBehavior;
+  }
+  if (props.direction !== undefined) {
+    hostControllerProps.layoutDirection = props.direction;
   }
 
   React.useEffect(() => {

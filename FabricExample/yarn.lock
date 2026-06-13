@@ -2579,6 +2579,26 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@nativescript/react-native@file:../../../NativeScriptRuntime/packages/react-native::locator=FabricExample%40workspace%3A.":
+  version: 0.0.1
+  resolution: "@nativescript/react-native@file:../../../NativeScriptRuntime/packages/react-native#../../../NativeScriptRuntime/packages/react-native::hash=11cefa&locator=FabricExample%40workspace%3A."
+  peerDependencies:
+    expo: "*"
+    react: "*"
+    react-native: ">=0.79"
+    react-native-worklets: ">=0.8.0"
+  peerDependenciesMeta:
+    expo:
+      optional: true
+    react-native-worklets:
+      optional: true
+  bin:
+    nativescript-rn: cli/configure.js
+    nativescript-rn-generate-metadata: cli/generate-metadata.js
+  checksum: 10c0/3870c91be61e5fa4de5c31aa55928e0128b3a461c5beaf3080d99ffd6c481ece2a08265965b6b600301c2f21f1b9720d0b7d621dec04070e7d98eb08514cc27f
+  languageName: node
+  linkType: hard
+
 "@nicolo-ribaudo/eslint-scope-5-internals@npm:5.1.1-v1":
   version: 5.1.1-v1
   resolution: "@nicolo-ribaudo/eslint-scope-5-internals@npm:5.1.1-v1"
@@ -3535,6 +3555,7 @@ __metadata:
     "@babel/core": "npm:^7.25.2"
     "@babel/preset-env": "npm:^7.25.3"
     "@babel/runtime": "npm:^7.26.10"
+    "@nativescript/react-native": "file:../../../NativeScriptRuntime/packages/react-native"
     "@react-native-community/cli": "npm:20.1.0"
     "@react-native-community/cli-platform-android": "npm:20.1.0"
     "@react-native-community/cli-platform-ios": "npm:20.1.0"
