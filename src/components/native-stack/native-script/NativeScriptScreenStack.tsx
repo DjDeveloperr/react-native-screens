@@ -17,7 +17,11 @@ export const NativeScriptScreenContainer =
   null as unknown as React.ComponentType<ScreenContainerProps>;
 
 export const NativeScriptScreenStack =
-  null as unknown as React.ComponentType<ScreenStackProps>;
+  null as unknown as React.ComponentType<
+    ScreenStackProps & {
+      modalContentParentScreenId?: string | undefined;
+    }
+  >;
 
 export const NativeScriptScreenStackItem =
   null as unknown as React.ForwardRefExoticComponent<
@@ -25,6 +29,13 @@ export const NativeScriptScreenStackItem =
       Omit<ScreenProps, 'enabled' | 'isNativeStack' | 'hasLargeHeader'> & {
         contentStyle?: ScreenProps['style'];
         headerConfig?: unknown;
+        nativeScriptHeaderSubviewCount?: number | undefined;
+        onNativeScriptHeaderButtonPress?:
+          | ((event: { nativeEvent: { buttonId: string } }) => void)
+          | undefined;
+        onNativeScriptHeaderMenuItemPress?:
+          | ((event: { nativeEvent: { menuId: string } }) => void)
+          | undefined;
         screenId: string;
       }
     > &
@@ -65,7 +76,7 @@ export function registerNativeScriptHeaderSubview(
   _registration: NativeScriptHeaderSubviewRegistration,
   _nativeView: unknown,
 ) {
-  return undefined;
+  return false;
 }
 
 export function unregisterNativeScriptHeaderSubview(
@@ -79,17 +90,43 @@ export function notifyNativeScriptHeaderSubviewChanged(_screenId: string) {
   return undefined;
 }
 
+export function setNativeScriptHeaderSubviewExpectedCount(
+  _screenId: string | undefined,
+  _count: number | undefined,
+) {
+  return false;
+}
+
 export function notifyNativeScriptScreenContentWrapperFrame(
   _screenId: string | undefined,
   _frame: unknown,
   _contentWrapperView?: unknown,
+  _forceTouchRefresh?: boolean,
 ) {
   return undefined;
+}
+
+export function nativeScriptScreenContentWrapperEffectiveFrameOnUI(
+  _screenId: string | undefined,
+  frame: unknown,
+) {
+  return frame;
+}
+
+export function nativeScriptScreenContentWrapperHostReadyOnUI(
+  _screenId: string | undefined,
+  _contentWrapperViewHandle: string | undefined,
+  _visibleDescendantCount?: number,
+  _windowAttached?: boolean,
+) {
+  return false;
 }
 
 export function notifyNativeScriptScreenContentWrapperHostReady(
   _screenId: string | undefined,
   _contentWrapperViewHandle: string | undefined,
+  _visibleDescendantCount?: number,
+  _windowAttached?: boolean,
 ) {
   return Promise.resolve(false);
 }

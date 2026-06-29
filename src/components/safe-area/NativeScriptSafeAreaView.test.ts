@@ -49,6 +49,17 @@ function makeView() {
   return view;
 }
 
+function makePointInsideView() {
+  const view = makeView();
+  view['pointInside:withEvent:'] = jest.fn((point: any) => {
+    const width = view.bounds?.size?.width ?? 0;
+    const height = view.bounds?.size?.height ?? 0;
+
+    return point.x >= 0 && point.y >= 0 && point.x < width && point.y < height;
+  });
+  return view;
+}
+
 function installMethods(target: any, methods: Record<string, unknown>) {
   Object.defineProperties(target, Object.getOwnPropertyDescriptors(methods));
   return target;
@@ -75,7 +86,7 @@ describe('NativeScript SafeAreaView port', () => {
       "debugName: 'RNSSafeAreaView.NativeScript'",
     );
     expect(safeAreaIOSSource).toContain(
-      'NativeScript cannot mutate that Fabric C++ shadow state',
+      'Host refresh is restricted to Fabric-driven',
     );
     expect(safeAreaIOSSource).toContain('__rnsNativeScriptSafeAreaContentView');
     expect(safeAreaIOSSource).toContain('findNearestSafeAreaProvider');
@@ -84,7 +95,19 @@ describe('NativeScript SafeAreaView port', () => {
     expect(safeAreaIOSSource).toContain(
       'this.__rnsSafeAreaNeedsHostRefresh = true;',
     );
+    expect(safeAreaIOSSource).toContain(
+      'disableDetachedChildrenTouchHandler',
+    );
     expect(safeAreaIOSSource).toContain('safeAreaProviderInsetsDidChange:');
+    expect(safeAreaIOSSource).toContain(
+      'RNSSafeAreaContentViewNativeScript',
+    );
+    expect(safeAreaIOSSource).toContain(
+      'nativeScriptSafeAreaContainerHitTest',
+    );
+    expect(safeAreaIOSSource).toContain(
+      '__rnsNativeScriptSafeAreaPassthroughView',
+    );
     expect(stackSource).toContain('RNSScreenNativeScriptView');
     expect(stackSource).toContain('providerSafeAreaInsets');
     expect(stackSource).toContain('RNSSafeAreaDidChange');
@@ -102,11 +125,11 @@ describe('NativeScript SafeAreaView port', () => {
     const UIView = function UIView() {};
     Object.assign(UIView, {
       alloc: () => ({
-        init: () => makeView(),
+        init: () => makePointInsideView(),
       }),
       extend: (methods: Record<string, unknown>) => ({
         alloc: () => ({
-          init: () => installMethods(makeView(), methods),
+          init: () => installMethods(makePointInsideView(), methods),
         }),
       }),
     });
@@ -166,11 +189,11 @@ describe('NativeScript SafeAreaView port', () => {
     host.rootView.window = {};
     host.rootView.didMoveToWindow();
 
-    expect(refreshSpy).toHaveBeenCalledTimes(2);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
 
     host.rootView.safeAreaProviderInsetsDidChange({});
 
-    expect(refreshSpy).toHaveBeenCalledTimes(3);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
 
     host.rootView.bounds = makeFrame(400, 800);
     host.rootView.layoutSubviews();
@@ -179,6 +202,61 @@ describe('NativeScript SafeAreaView port', () => {
       origin: { x: 0, y: 47 },
       size: { height: 719, width: 395 },
     });
-    expect(refreshSpy).toHaveBeenCalledTimes(4);
+    expect(refreshSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes native hit testing through inert RN layout wrappers', () => {
+    const NativeScriptRuntime = jest.requireActual(
+      '@nativescript/react-native',
+    );
+    NativeScriptRuntime.__resetDefinitions();
+
+    const UIView = function UIView() {};
+    Object.assign(UIView, {
+      alloc: () => ({
+        init: () => makePointInsideView(),
+      }),
+      extend: (methods: Record<string, unknown>) => ({
+        alloc: () => ({
+          init: () => installMethods(makePointInsideView(), methods),
+        }),
+      }),
+    });
+
+    (global as Record<string, unknown>).__nativeScriptNativeApi = {
+      UIColor: {
+        clearColor: 'clear',
+      },
+      UIView,
+      UIViewAutoresizing: {
+        FlexibleHeight: 16,
+        FlexibleWidth: 2,
+      },
+    };
+
+    jest.requireActual('./SafeAreaView.ios');
+    expect((global as Record<string, unknown>).NativeClass).toBeUndefined();
+
+    const definition = NativeScriptRuntime.__getDefinitions().find(
+      (candidate: { debugName?: string }) =>
+        candidate.debugName === 'RNSSafeAreaView.NativeScript',
+    );
+    const host = definition.create({
+      edges: { bottom: false, left: false, right: false, top: false },
+    });
+    const inertLayoutView = makePointInsideView();
+    const pressableLeaf = makePointInsideView();
+    inertLayoutView.userInteractionEnabled = false;
+    inertLayoutView.hitTest = jest.fn(() => null);
+    pressableLeaf.userInteractionEnabled = true;
+    pressableLeaf.hitTest = jest.fn(() => pressableLeaf);
+    inertLayoutView.addSubview(pressableLeaf);
+    host.childrenView.addSubview(inertLayoutView);
+
+    const hit = host.rootView['hitTest:withEvent:']({ x: 20, y: 20 }, null);
+
+    expect(hit).toBe(pressableLeaf);
+    expect(inertLayoutView.hitTest).not.toHaveBeenCalled();
+    expect(pressableLeaf.hitTest).toHaveBeenCalled();
   });
 });

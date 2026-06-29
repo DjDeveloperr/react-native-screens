@@ -96,6 +96,38 @@ function nativeValue(name: string): any {
   return api?.[name] ?? globalObject[name];
 }
 
+function nativeClassValue(name: string): any {
+  'worklet';
+  const runtimeGetClass = (NativeScriptRuntime as any).getClass;
+  const runtimeClass =
+    typeof runtimeGetClass === 'function' ? runtimeGetClass(name) : null;
+
+  if (runtimeClass) {
+    return runtimeClass;
+  }
+
+  const globalObject = globalThis as Record<string, any>;
+  const globalClass = globalObject[name];
+
+  if (globalClass && typeof globalClass.alloc === 'function') {
+    return globalClass;
+  }
+
+  const api = globalObject.__nativeScriptNativeApi;
+  return api?.getClass?.(name) ?? api?.[name] ?? null;
+}
+
+function defineObjCExposedMethods(target: any, exposedMethods: any) {
+  'worklet';
+
+  Object.defineProperty(target, 'ObjCExposedMethods', {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: exposedMethods,
+  });
+}
+
 function flexibleSizeMask(): number {
   'worklet';
   const autoresizing = nativeValue('UIViewAutoresizing');
@@ -155,7 +187,7 @@ function nilIfEmpty(value: unknown): string | null {
 
 function createGammaStackUIView() {
   'worklet';
-  const UIView = nativeValue('UIView');
+  const UIView = nativeClassValue('UIView');
   if (!UIView || typeof UIView.alloc !== 'function') {
     return null;
   }
@@ -267,9 +299,13 @@ function gammaStackNavigationControllerClass() {
     return existing;
   }
 
-  const UINavigationController = nativeValue('UINavigationController');
+  const UINavigationController = nativeClassValue('UINavigationController');
   const NativeClassFunction = globalObject.NativeClass;
-  if (!UINavigationController || typeof NativeClassFunction !== 'function') {
+  if (
+    !UINavigationController ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UINavigationController.extend !== 'function')
+  ) {
     return UINavigationController;
   }
 
@@ -288,8 +324,10 @@ function gammaStackNavigationControllerClass() {
     },
   };
 
-  (RNSGammaStackNavigationController as any).ObjCExposedMethods =
-    exposedMethods;
+  defineObjCExposedMethods(
+    RNSGammaStackNavigationController,
+    exposedMethods,
+  );
 
   if (typeof UINavigationController.extend === 'function') {
     const NavigationControllerClass = UINavigationController.extend(
@@ -321,9 +359,13 @@ function gammaStackScreenControllerClass() {
     return existing;
   }
 
-  const UIViewController = nativeValue('UIViewController');
+  const UIViewController = nativeClassValue('UIViewController');
   const NativeClassFunction = globalObject.NativeClass;
-  if (!UIViewController || typeof NativeClassFunction !== 'function') {
+  if (
+    !UIViewController ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIViewController.extend !== 'function')
+  ) {
     return UIViewController;
   }
 
@@ -413,7 +455,7 @@ function gammaStackScreenControllerClass() {
     },
   };
 
-  (RNSGammaStackScreenController as any).ObjCExposedMethods = exposedMethods;
+  defineObjCExposedMethods(RNSGammaStackScreenController, exposedMethods);
 
   if (typeof UIViewController.extend === 'function') {
     const methods: Record<string, any> = {};
@@ -449,7 +491,7 @@ function gammaStackScreenControllerClass() {
 
 function createGammaStackStagingMountView(controller: any) {
   'worklet';
-  const UIView = nativeValue('UIView');
+  const UIView = nativeClassValue('UIView');
   if (!UIView || typeof UIView.alloc !== 'function') {
     return null;
   }
@@ -606,7 +648,7 @@ function makeGammaStackHeaderWrappedView(record: any) {
 
 function makeGammaStackHeaderBarButtonItem(record: any) {
   'worklet';
-  const UIBarButtonItem = nativeValue('UIBarButtonItem');
+  const UIBarButtonItem = nativeClassValue('UIBarButtonItem');
   if (!UIBarButtonItem) {
     return null;
   }
@@ -841,34 +883,6 @@ function scheduleGammaStackHeaderSubmit(configId: string | undefined) {
   }
 
   submitGammaStackHeaderConfig(configId);
-
-  if (typeof setTimeout !== 'function') {
-    return;
-  }
-
-  const registry = ensureGammaStackRegistry();
-  const config = registry.headerConfigs?.[configId];
-  if (!config) {
-    return;
-  }
-
-  const token = (config.submitToken ?? 0) + 1;
-  config.submitToken = token;
-  setTimeout(
-    (targetConfigId: string, targetToken: number) => {
-      'worklet';
-      const targetRegistry = (globalThis as Record<string, any>)
-        .__rnsNativeScriptGammaStackRegistry;
-      const targetConfig = targetRegistry?.headerConfigs?.[targetConfigId];
-      if (!targetConfig || targetConfig.submitToken !== targetToken) {
-        return;
-      }
-      submitGammaStackHeaderConfig(targetConfigId);
-    },
-    0,
-    configId,
-    token,
-  );
 }
 
 function submitGammaStackHeaderConfigsForScreen(screenKey: string) {
@@ -1250,8 +1264,8 @@ function commitGammaStackOperations(host: any) {
   // NATIVESCRIPT_PORT_DEVIATION: upstream executes the queued operations from
   // RCTMountingTransactionObserving after a Fabric transaction mounts. The TS
   // port receives host/screen records through separate NativeScript component
-  // callbacks, so it executes the same ordered push/pop queue at the end of
-  // each host/screen update and once more on a token-coalesced zero-delay tick.
+  // callbacks, so each host/screen registration synchronously drains the same
+  // ordered push/pop queue after updating the shared registry.
 }
 
 function scheduleGammaStackCommit(hostId: string) {
@@ -1262,26 +1276,6 @@ function scheduleGammaStackCommit(hostId: string) {
   }
 
   commitGammaStackOperations(host);
-
-  if (typeof setTimeout !== 'function') {
-    return;
-  }
-
-  const token = (host.commitToken ?? 0) + 1;
-  host.commitToken = token;
-  setTimeout(
-    (targetHostId: string, targetToken: number) => {
-      'worklet';
-      const targetHost = getGammaStackHostRecord(targetHostId);
-      if (!targetHost || targetHost.commitToken !== targetToken) {
-        return;
-      }
-      commitGammaStackOperations(targetHost);
-    },
-    0,
-    hostId,
-    token,
-  );
 }
 
 function attachExistingGammaScreens(host: any) {
@@ -1398,7 +1392,7 @@ const GammaStackScreenController = NativeScriptRuntime.defineUIViewController<
   createController(props: any) {
     'worklet';
     const ScreenController = gammaStackScreenControllerClass();
-    const UIView = nativeValue('UIView');
+    const UIView = nativeClassValue('UIView');
     const UIColor = nativeValue('UIColor');
     if (!ScreenController || typeof ScreenController.alloc !== 'function') {
       throw new Error('UIViewController is not available');
@@ -1837,6 +1831,7 @@ export function NativeScriptGammaStackScreen(props: StackScreenProps) {
         attachController
         attachControllerView={false}
         attachNativeView={false}
+        detachControllerFromParent
         onDismiss={onDismissWrapper}
         style={StyleSheet.absoluteFill}>
         {children}

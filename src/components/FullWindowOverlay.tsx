@@ -236,7 +236,11 @@ function nativeScriptFullWindowOverlayContainerClass() {
   const UIView = nativeValue('UIView');
   const NativeClassFunction = globalObject.NativeClass;
 
-  if (!UIView || typeof NativeClassFunction !== 'function') {
+  if (
+    !UIView ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIView.extend !== 'function')
+  ) {
     return UIView;
   }
 
@@ -383,7 +387,11 @@ function nativeScriptFullWindowOverlayRootViewClass() {
   const UIView = nativeValue('UIView');
   const NativeClassFunction = globalObject.NativeClass;
 
-  if (!UIView || typeof NativeClassFunction !== 'function') {
+  if (
+    !UIView ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIView.extend !== 'function')
+  ) {
     return UIView;
   }
 

@@ -152,9 +152,10 @@ describe('NativeScript gamma Stack port', () => {
     expect(stackSource).toContain(
       "debugName: 'RNSStackHeaderItemSpacerIOS.NativeScript'",
     );
-    expect(stackSource).toContain("nativeValue('UINavigationController')");
-    expect(stackSource).toContain("nativeValue('UIViewController')");
-    expect(stackSource).toContain("nativeValue('UIBarButtonItem')");
+    expect(stackSource).toContain("nativeClassValue('UINavigationController')");
+    expect(stackSource).toContain("nativeClassValue('UIViewController')");
+    expect(stackSource).toContain("nativeClassValue('UIBarButtonItem')");
+    expect(stackSource).toContain('detachControllerFromParent');
     expect(stackSource).toContain('navigationBar.prefersLargeTitles = true');
     expect(stackSource).toContain(
       'pushViewControllerAnimated(record.controller, true)',
@@ -171,19 +172,33 @@ describe('NativeScript gamma Stack port', () => {
     expect(stackSource).toContain(
       'NATIVESCRIPT_PORT_DEVIATION: upstream executes the queued operations',
     );
+    const scheduleCommitSource = stackSource.slice(
+      stackSource.indexOf('function scheduleGammaStackCommit'),
+      stackSource.indexOf('function attachExistingGammaScreens'),
+    );
+    expect(scheduleCommitSource).toContain('commitGammaStackOperations(host);');
+    expect(scheduleCommitSource).not.toContain('setTimeout(');
+    expect(scheduleCommitSource).not.toContain('commitToken');
     expect(stackSource).toContain(
       'NATIVESCRIPT_PORT_DEVIATION: upstream RNSStackHeaderConfig keeps',
     );
     expect(stackSource).toContain(
       'Direct port of RNSStackNavigationItemCoordinator.applyToController',
     );
+    const scheduleHeaderSubmitSource = stackSource.slice(
+      stackSource.indexOf('function scheduleGammaStackHeaderSubmit'),
+      stackSource.indexOf('function submitGammaStackHeaderConfigsForScreen'),
+    );
+    expect(scheduleHeaderSubmitSource).toContain(
+      'submitGammaStackHeaderConfig(configId);',
+    );
+    expect(scheduleHeaderSubmitSource).not.toContain('setTimeout(');
+    expect(scheduleHeaderSubmitSource).not.toContain('submitToken');
     expect(stackSource).not.toContain('NativeStackView');
     expect(stackSource).not.toContain('requireNativeComponent');
   });
 
   it('queues attached screens as animated UIKit pushes and detached top screens as animated UIKit pops', () => {
-    jest.useFakeTimers();
-
     const NativeScriptRuntime = jest.requireActual(
       '@nativescript/react-native',
     );
@@ -359,14 +374,12 @@ describe('NativeScript gamma Stack port', () => {
       },
     ]);
 
-    jest.runOnlyPendingTimers();
     expect(
       navigationController.pushViewControllerAnimated,
     ).toHaveBeenCalledTimes(2);
     expect(
       navigationController.popViewControllerAnimated,
     ).toHaveBeenCalledTimes(1);
-    jest.useRealTimers();
   });
 
   it('applies gamma header configs to UINavigationItem through NativeScript UIKit objects', () => {

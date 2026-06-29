@@ -52,6 +52,38 @@ function nativeValue(name: string): any {
   return api?.[name] ?? globalObject[name];
 }
 
+function nativeClassValue(name: string): any {
+  'worklet';
+  const runtimeGetClass = (NativeScriptRuntime as any).getClass;
+  const runtimeClass =
+    typeof runtimeGetClass === 'function' ? runtimeGetClass(name) : null;
+
+  if (runtimeClass) {
+    return runtimeClass;
+  }
+
+  const globalObject = globalThis as Record<string, any>;
+  const globalClass = globalObject[name];
+
+  if (globalClass && typeof globalClass.alloc === 'function') {
+    return globalClass;
+  }
+
+  const api = globalObject.__nativeScriptNativeApi;
+  return api?.getClass?.(name) ?? api?.[name] ?? null;
+}
+
+function defineObjCExposedMethods(target: any, exposedMethods: any) {
+  'worklet';
+
+  Object.defineProperty(target, 'ObjCExposedMethods', {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: exposedMethods,
+  });
+}
+
 function flexibleSizeMask(): number {
   'worklet';
   const autoresizing = nativeValue('UIViewAutoresizing');
@@ -289,7 +321,7 @@ function topColumnForCollapsingValue(value: unknown) {
 
 function createSplitUIView() {
   'worklet';
-  const UIView = nativeValue('UIView');
+  const UIView = nativeClassValue('UIView');
   if (!UIView || typeof UIView.alloc !== 'function') {
     return null;
   }
@@ -344,9 +376,13 @@ function splitHostControllerClass() {
     return existing;
   }
 
-  const UISplitViewController = nativeValue('UISplitViewController');
+  const UISplitViewController = nativeClassValue('UISplitViewController');
   const NativeClassFunction = globalObject.NativeClass;
-  if (!UISplitViewController || typeof NativeClassFunction !== 'function') {
+  if (
+    !UISplitViewController ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UISplitViewController.extend !== 'function')
+  ) {
     return UISplitViewController;
   }
 
@@ -461,8 +497,10 @@ function splitHostControllerClass() {
     },
   };
 
-  (RNSSplitHostControllerNativeScript as any).ObjCExposedMethods =
-    exposedMethods;
+  defineObjCExposedMethods(
+    RNSSplitHostControllerNativeScript,
+    exposedMethods,
+  );
 
   if (typeof UISplitViewController.extend === 'function') {
     const HostControllerClass = UISplitViewController.extend(
@@ -528,9 +566,13 @@ function splitScreenControllerClass() {
     return existing;
   }
 
-  const UIViewController = nativeValue('UIViewController');
+  const UIViewController = nativeClassValue('UIViewController');
   const NativeClassFunction = globalObject.NativeClass;
-  if (!UIViewController || typeof NativeClassFunction !== 'function') {
+  if (
+    !UIViewController ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIViewController.extend !== 'function')
+  ) {
     return UIViewController;
   }
 
@@ -614,8 +656,10 @@ function splitScreenControllerClass() {
     },
   };
 
-  (RNSSplitScreenControllerNativeScript as any).ObjCExposedMethods =
-    exposedMethods;
+  defineObjCExposedMethods(
+    RNSSplitScreenControllerNativeScript,
+    exposedMethods,
+  );
 
   if (typeof UIViewController.extend === 'function') {
     const methods: Record<string, any> = {};
@@ -656,9 +700,13 @@ function splitNavigationControllerClass() {
     return existing;
   }
 
-  const UINavigationController = nativeValue('UINavigationController');
+  const UINavigationController = nativeClassValue('UINavigationController');
   const NativeClassFunction = globalObject.NativeClass;
-  if (!UINavigationController || typeof NativeClassFunction !== 'function') {
+  if (
+    !UINavigationController ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UINavigationController.extend !== 'function')
+  ) {
     return UINavigationController;
   }
 
@@ -686,8 +734,10 @@ function splitNavigationControllerClass() {
     },
   };
 
-  (RNSSplitNavigationControllerNativeScript as any).ObjCExposedMethods =
-    exposedMethods;
+  defineObjCExposedMethods(
+    RNSSplitNavigationControllerNativeScript,
+    exposedMethods,
+  );
 
   if (typeof UINavigationController.extend === 'function') {
     const NavigationControllerClass = UINavigationController.extend(
@@ -889,26 +939,6 @@ function scheduleSplitCommit(hostId: string) {
   }
 
   commitSplitHost(host);
-
-  if (typeof setTimeout !== 'function') {
-    return;
-  }
-
-  const token = (host.commitToken ?? 0) + 1;
-  host.commitToken = token;
-  setTimeout(
-    (targetHostId: string, targetToken: number) => {
-      'worklet';
-      const targetHost = getSplitHostRecord(targetHostId);
-      if (!targetHost || targetHost.commitToken !== targetToken) {
-        return;
-      }
-      commitSplitHost(targetHost);
-    },
-    0,
-    hostId,
-    token,
-  );
 }
 
 function applyColumnMetric(
@@ -1419,6 +1449,7 @@ function NativeScriptSplitScreenView(
       attachController
       attachControllerView={false}
       attachNativeView={false}
+      detachControllerFromParent
       style={StyleSheet.absoluteFill}
     />
   );

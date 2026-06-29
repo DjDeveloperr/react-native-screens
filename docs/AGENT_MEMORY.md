@@ -1,5 +1,29 @@
 # Agent Memory
 
+## 2026-06-13 - RN Screens NativeScript Parity Loop
+
+Trigger: repeated first-tap, modal-after-gesture, and blank-modal failures were mixed between harness launch state, SimDeck service state, and real UIKit ownership/layout bugs in the NativeScript `react-native-screens` port.
+Rule: use only the dedicated simulator for this task, currently `NS Screens Only iPhone 17 178137` / `BF759806-2EBB-49ED-AD8E-413A7790ADE0`; recreate only that simulator if corrupt, and leave all other simulators untouched. Before changing source, prove the intended app is foreground and SimDeck is healthy. AX visibility is not UIKit transition/readiness proof, and SafeAreaView/NativeScript host idempotence must still refresh on window/provider lifecycle changes even when the frame is unchanged. If a visible RN button does not receive touches, inspect native hit-testing/view geometry and controller ownership before changing navigation state or demo code.
+Verification pattern: run focused unit/type regressions, deterministically launch `org.nativescript.uikit.demo` with the dev-client URL, keep stress harnesses on one SimDeck service mode, then run modal-only and compact mixed push/pop/gesture/modal stress on the named UDID. Remove all temporary `[NS_*]` diagnostics before close and record the exact commands/artifacts in this file.
+
+## 2026-06-13 - Transparent Header Safe-Area Proof
+
+Trigger: React Nav content looked too high after previous inset fixes, but a clean dedicated-sim relaunch showed the fork matching upstream at `Push` y=543.3 / `Present` y=609.3.
+Rule: do not reintroduce manual `UIScrollView.contentInset.top` for transparent headers. UIKit `adjustedContentInset` must come from controller safe area; if the screenshot disagrees, first prove launch/bundle freshness and inspect `adjustedContentInset`, `contentInset`, and safe-area values.
+Verification: deterministic dev-client relaunch on the dedicated UDID, compare upstream/fork AX frames, then run focused safe-area unit tests and compact SimDeck stress.
+
+## 2026-06-13 - Dedicated Sim and UIKit Readiness
+
+Trigger: first-tap/modal flakes mixed SimDeck/AX state with a real detached `UINavigationController` presenter; touching other simulators made evidence noisy.
+Rule: use only the named iPhone 17 UDID for this port, and recreate only that sim if corrupt. AX-visible controls are not UIKit transition/readiness proof: verify controller `parentViewController`/`presentingViewController` and source parity before adding shims.
+Verification: deterministic dev-client launch, foreground bundle guard, focused unit regression, modal-only stress, mixed push/gesture/modal stress, and app logs with no detached-presenter warning.
+
+## 2026-06-13 - Dedicated Sim and Host Handle Proof
+
+Trigger: fresh-sim React Nav looked header-only while another iOS simulator/foreign app and a real same-handle NativeScript host race were both in play.
+Rule: use a named iPhone 17 UDID only; run `simdeck use $UDID` plus `SIMDECK_DEVICE`/`SIMDECK_UDID`; guard foreground bundle before coordinate taps. If a JS handle is unchanged but ObjC view/controller was nil, retry native handle resolution in runtime, not demo code.
+Verification: `simdeck use $UDID` selects the dedicated simulator and `simdeck processes` shows the intended foreground bundle; run `node packages/react-native/test/uikit-host-refresh-api.test.js`, rebuild/reinstall, deterministic dev-client URL, then modal-only and mixed stress.
+
 ## 2026-06-12 - Modal After Gesture Triage
 
 Trigger: repeated first-tap/modal-after-gesture failures mixed launch/SimDeck state with real UIKit touch bugs: duplicate/stale `RCTSurfaceTouchHandler`, stale full-width RN wrapper bounds under modal scroll content, and a root-only AX artifact (`1781300156339-modal-dismiss-button-3`).
@@ -42,13 +66,11 @@ When verifying the NativeScript `react-native-screens` port with the UIKit demo:
 - Gamma `StackHeaderConfig` / `StackHeaderItem` / `StackHeaderItemSpacer` iOS now route through `NativeScriptGammaStack.ios.tsx`. Keep them as NativeScript UIKit containers that build the same `UINavigationItem` data as upstream `RNSStackNavigationItemCoordinator`: title/titleView, iOS 26 large-title adjunct fields, left/right animated `UIBarButtonItem` arrays, fixed/flexible spacers, and nav-bar hidden state. The staging `UIView` is runtime plumbing only: React needs a hidden parent before UIKit wraps/moves custom header item views into bar items, whereas upstream receives children through Fabric component-view mount callbacks.
 - Gamma `SplitHost` / `SplitScreen` iOS now route through `NativeScriptSplit.ios.tsx`. Keep the shape aligned with upstream Swift/ObjC: `UISplitViewController` host, `UINavigationController` wrappers per column, `UIViewController` screen columns, UIKit `show(column)` command support, appearance prop mapping through `UISplitViewController`, and screen lifecycle events from view-controller appearance selectors. The documented deviations are shadow-state/origin feedback and device-orientation enforcement: upstream mutates Fabric shadow state and calls `RNSScreenWindowTraits.enforceDesiredDeviceOrientation`, while the TS port refreshes the generic NativeScript host view and stores orientation because those native helpers are not exposed as generic NativeScript runtime APIs yet.
 
-Latest verified path for this workspace, refreshed 2026-06-12 after the generic containment-order fix, `FullWindowOverlay`, `RNSScrollViewMarker`, iOS 26 tabs bottom-accessory, and gamma StackHost/StackScreen NativeScript ports, plus fixed-coordinate stress harness hardening:
+Latest verified path for this workspace, refreshed 2026-06-14 after the explicit NativeScript UIKit-host `refresh` lifecycle, modal content-readiness gate, and interactive-pop view-hosting repair:
 
-- Device: `NS Screens iPhone 17`, iOS 26.5, UDID `9C07B3D7-6CB4-41AD-BFF9-1AB199C369DF`.
-- Metro: `127.0.0.1:8082`.
-- SimDeck: `http://127.0.0.1:4310`.
-- Deterministic launch before stress: `simdeck launch org.nativescript.uikit.demo`, `simdeck open-url 'org.nativescript.uikit.demo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8082'`, then `simdeck wait-for --label 'NativeScript UIKit tabs' --timeout-ms 45000`.
-- Repeated stress command: `SIMDECK_DEVICE=9C07B3D7-6CB4-41AD-BFF9-1AB199C369DF SIMDECK_UDID=9C07B3D7-6CB4-41AD-BFF9-1AB199C369DF APP_ID=org.nativescript.uikit.demo TARGET_APP_LABEL='NativeScript UIKit Demo' DEV_CLIENT_URL='org.nativescript.uikit.demo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8082' CYCLES=2 COLD_CYCLES=2 COLD_DELAYS_MS=0,80 DUPLICATE_CYCLES=2 GESTURE_CYCLES=2 MODAL_CYCLES=2 HEADER_CYCLES=1 MENU_CYCLES=1 CUSTOM_HEADER_CYCLES=1 TAB_SWITCH_CYCLES=2 TAB_SWITCH_DELAYS_MS=0,80 RAW_ROUTE_TAPS=0 FAST_ROUTE_COORDS=1 CUSTOM_HEADER_ACTION_X=304 CUSTOM_HEADER_ACTION_Y=84 node scripts/stress-react-nav-comprehensive.js`.
-- Stress coverage: repeated cold tab first push, repeated hot tab first push, immediate push/pop, duplicate push/pop guards, gesture-back first push, modal present/dismiss/retry, header button/menu/custom-header subview paths.
-- Upstream/native baseline comparison app: bundle id `org.nativescript.uikit.demo.original`, dev-client URL `originalnativetabsdemo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8083`, root label `Original Native Tabs Demo`. Start Metro with `EXPO_ROUTER_DISABLE_RN_NAVIGATION_CHECK=1 npm run start -- --clear`. The first deep link may show an iOS `Open in "Original Native Tabs Demo"?` sheet whose AX subtree can be reported disabled; use visible point tap `simdeck tap 275 485` once, then rerun deterministic launch.
-- Full upstream/native stress command uses the same harness with env overrides: `APP_ID=org.nativescript.uikit.demo.original TARGET_APP_LABEL='Original Native Tabs Demo' DEV_CLIENT_URL='originalnativetabsdemo://expo-development-client/?url=http%3A%2F%2F127.0.0.1%3A8083' CUSTOM_HEADER_ACTION_X=352 CUSTOM_HEADER_ACTION_Y=84 ... npm run stress:react-nav`. The upstream `headerRight` custom view is visible farther right than the NativeScript-hosted custom view and may not expose an AX point label, so the harness verifies the shared count label after tapping.
+- Device: `NS Screens Only iPhone 17 178137`, UDID `BF759806-2EBB-49ED-AD8E-413A7790ADE0`.
+- Metro: demo dev-client URL `org.nativescript.uikit.demo://expo-development-client/?url=http%3A%2F%2F10.0.0.55%3A8082`.
+- Required source checks: runtime UIKit host tests, screens focused ScreenStack unit test, `check-types`, `bob build`, and demo `npm run typecheck`.
+- Compact final stress command: `SIMDECK_DEVICE=BF759806-2EBB-49ED-AD8E-413A7790ADE0 SIMDECK_UDID=BF759806-2EBB-49ED-AD8E-413A7790ADE0 DEV_CLIENT_URL='org.nativescript.uikit.demo://expo-development-client/?url=http%3A%2F%2F10.0.0.55%3A8082' CYCLES=1 DUPLICATE_CYCLES=1 GESTURE_CYCLES=1 MODAL_CYCLES=1 HEADER_CYCLES=1 CUSTOM_HEADER_CYCLES=1 MENU_CYCLES=1 COLD_CYCLES=1 COLD_DELAYS_MS='0,100,300' TAB_SWITCH_CYCLES=1 TAB_SWITCH_DELAYS_MS='0,100,300' WAIT_TIMEOUT_MS=10000 npm run stress:react-nav`.
+- Stress coverage: cold and hot first tap push, immediate push/pop, duplicate push/pop guards, first push after gesture-back, modal present/dismiss and swipe dismiss, native header button/menu, custom header subview, tab labels, and tab switching.
+- Cleanup rule: before closing, run a source scan for `NS_*_DIAG`, `NS_*_PROBE`, `NS_MODAL_STATE`, `NS_MODAL_TRACE`, `NS_GESTURE_TRACE`, `NS_REPAIR_TRACE`, and `temporaryModal*`/`temporaryGesture*`; only durable debug flags/tests should remain.

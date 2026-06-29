@@ -97,10 +97,11 @@ describe('NativeScript gamma Split port', () => {
   it('ports split host/screen UIKit structure and documents deviations', () => {
     expect(splitSource).toContain("debugName: 'RNSSplitHost.NativeScript'");
     expect(splitSource).toContain("debugName: 'RNSSplitScreen.NativeScript'");
-    expect(splitSource).toContain("nativeValue('UISplitViewController')");
-    expect(splitSource).toContain("nativeValue('UINavigationController')");
+    expect(splitSource).toContain("nativeClassValue('UISplitViewController')");
+    expect(splitSource).toContain("nativeClassValue('UINavigationController')");
     expect(splitSource).toContain('initWithStyle(style)');
     expect(splitSource).toContain('initWithRootViewController');
+    expect(splitSource).toContain('detachControllerFromParent');
     expect(splitSource).toContain('setViewControllerForColumn');
     expect(splitSource).toContain('showSplitColumn');
     expect(splitSource).toContain(
@@ -112,13 +113,18 @@ describe('NativeScript gamma Split port', () => {
     expect(splitSource).toContain(
       'NATIVESCRIPT_PORT_DEVIATION: upstream also calls',
     );
+    const scheduleCommitSource = splitSource.slice(
+      splitSource.indexOf('function scheduleSplitCommit'),
+      splitSource.indexOf('function applyColumnMetric'),
+    );
+    expect(scheduleCommitSource).toContain('commitSplitHost(host);');
+    expect(scheduleCommitSource).not.toContain('setTimeout(');
+    expect(scheduleCommitSource).not.toContain('commitToken');
     expect(splitSource).not.toContain('SplitHostNativeComponent');
     expect(splitSource).not.toContain('SplitScreenNativeComponent');
   });
 
   it('mounts split columns through a UISplitViewController and emits UIKit lifecycle events', () => {
-    jest.useFakeTimers();
-
     const NativeScriptRuntime = jest.requireActual(
       '@nativescript/react-native',
     );
@@ -357,9 +363,6 @@ describe('NativeScript gamma Split port', () => {
         },
       },
     );
-
-    jest.runOnlyPendingTimers();
-
     expect(hostController.style).toBe(1);
     expect(hostController.viewControllers).toHaveLength(2);
     expect(hostController.viewControllers[0].topViewController).toBe(
@@ -422,6 +425,5 @@ describe('NativeScript gamma Split port', () => {
 
     expect(screenControllers).toHaveLength(3);
     expect(navigationControllers.length).toBeGreaterThanOrEqual(3);
-    jest.useRealTimers();
   });
 });

@@ -20,6 +20,38 @@ function nativeValue(name: string) {
   return api?.[name] ?? globalObject[name];
 }
 
+function nativeClassValue(name: string) {
+  'worklet';
+  const runtimeGetClass = (NativeScriptRuntime as any).getClass;
+  const runtimeClass =
+    typeof runtimeGetClass === 'function' ? runtimeGetClass(name) : null;
+
+  if (runtimeClass) {
+    return runtimeClass;
+  }
+
+  const globalObject = globalThis as Record<string, any>;
+  const globalClass = globalObject[name];
+
+  if (globalClass && typeof globalClass.alloc === 'function') {
+    return globalClass;
+  }
+
+  const api = globalObject.__nativeScriptNativeApi;
+  return api?.getClass?.(name) ?? api?.[name] ?? null;
+}
+
+function defineObjCExposedMethods(target: any, exposedMethods: any) {
+  'worklet';
+
+  Object.defineProperty(target, 'ObjCExposedMethods', {
+    configurable: true,
+    enumerable: false,
+    writable: true,
+    value: exposedMethods,
+  });
+}
+
 function flexibleSizeMask() {
   'worklet';
   const autoresizing = nativeValue('UIViewAutoresizing');
@@ -279,10 +311,14 @@ function nativeScriptScrollViewMarkerClass() {
     return existing;
   }
 
-  const UIView = nativeValue('UIView');
+  const UIView = nativeClassValue('UIView');
   const NativeClassFunction = globalObject.NativeClass;
 
-  if (!UIView || typeof NativeClassFunction !== 'function') {
+  if (
+    !UIView ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIView.extend !== 'function')
+  ) {
     return UIView;
   }
 
@@ -318,8 +354,10 @@ function nativeScriptScrollViewMarkerClass() {
     },
   };
 
-  (RNSScrollViewMarkerNativeScriptView as any).ObjCExposedMethods =
-    exposedMethods;
+  defineObjCExposedMethods(
+    RNSScrollViewMarkerNativeScriptView,
+    exposedMethods,
+  );
 
   if (typeof UIView.extend === 'function') {
     const methods: Record<string, unknown> = {};
@@ -366,7 +404,7 @@ const NativeScriptScrollViewMarker = NativeScriptRuntime.defineUIKitContainer<
   layout: { sizing: 'fill' },
   create() {
     'worklet';
-    const UIView = nativeValue('UIView');
+    const UIView = nativeClassValue('UIView');
     const MarkerView = nativeScriptScrollViewMarkerClass();
     const UIColor = nativeValue('UIColor');
 

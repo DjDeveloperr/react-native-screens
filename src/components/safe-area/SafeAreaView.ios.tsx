@@ -23,6 +23,8 @@ type NativeScriptSafeAreaHostView = {
 };
 
 const SAFE_AREA_VIEW_CLASS_KEY = '__rnsSafeAreaViewNativeScriptClass';
+const SAFE_AREA_CONTENT_VIEW_CLASS_KEY =
+  '__rnsSafeAreaContentViewNativeScriptClass';
 
 function nativeValue(name: string) {
   'worklet';
@@ -110,6 +112,245 @@ function childFrameMatches(
     numbersNearlyEqual(frameNumber(frame, 'width'), width) &&
     numbersNearlyEqual(frameNumber(frame, 'height'), height)
   );
+}
+
+function nativeObjectsEqual(left: any, right: any) {
+  'worklet';
+
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right) {
+    return false;
+  }
+
+  const leftHash = left.hash;
+  const rightHash = right.hash;
+
+  if (
+    leftHash != null &&
+    rightHash != null &&
+    (typeof leftHash === 'number' || typeof leftHash === 'string') &&
+    (typeof rightHash === 'number' || typeof rightHash === 'string') &&
+    leftHash === rightHash
+  ) {
+    return true;
+  }
+
+  if (typeof left.isEqual === 'function') {
+    try {
+      if (left.isEqual(right) === true) {
+        return true;
+      }
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  if (typeof right.isEqual === 'function') {
+    try {
+      return right.isEqual(left) === true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
+function nativeArrayCount(array: any) {
+  'worklet';
+
+  const count = array?.count;
+  if (typeof count === 'number') {
+    return count;
+  }
+
+  const length = array?.length;
+  return typeof length === 'number' ? length : 0;
+}
+
+function nativeArrayItem<T = any>(array: any, index: number): T | null {
+  'worklet';
+
+  if (!array || index < 0) {
+    return null;
+  }
+
+  if (typeof array.objectAtIndex === 'function') {
+    return array.objectAtIndex(index) ?? null;
+  }
+
+  return array[index] ?? null;
+}
+
+function convertPointFromNativeView(
+  point: any,
+  targetView: any,
+  sourceView: any,
+) {
+  'worklet';
+
+  if (typeof targetView?.convertPointFromView === 'function') {
+    return targetView.convertPointFromView(point, sourceView);
+  }
+
+  if (typeof targetView?.['convertPoint:fromView:'] === 'function') {
+    return targetView['convertPoint:fromView:'](point, sourceView);
+  }
+
+  if (typeof sourceView?.convertPointToView === 'function') {
+    return sourceView.convertPointToView(point, targetView);
+  }
+
+  if (typeof sourceView?.['convertPoint:toView:'] === 'function') {
+    return sourceView['convertPoint:toView:'](point, targetView);
+  }
+
+  return point;
+}
+
+function nativeViewPointInside(view: any, point: any, event: any) {
+  'worklet';
+
+  if (typeof view?.pointInsideWithEvent === 'function') {
+    return view.pointInsideWithEvent(point, event) !== false;
+  }
+
+  if (typeof view?.['pointInside:withEvent:'] === 'function') {
+    return view['pointInside:withEvent:'](point, event) !== false;
+  }
+
+  if (typeof view?.pointInside === 'function') {
+    return view.pointInside(point, event) !== false;
+  }
+
+  return true;
+}
+
+function nativeViewHitTest(view: any, point: any, event: any) {
+  'worklet';
+
+  if (typeof view?.hitTestWithEvent === 'function') {
+    return view.hitTestWithEvent(point, event);
+  }
+
+  if (typeof view?.['hitTest:withEvent:'] === 'function') {
+    return view['hitTest:withEvent:'](point, event);
+  }
+
+  if (typeof view?.hitTest === 'function') {
+    return view.hitTest(point, event);
+  }
+
+  return null;
+}
+
+function nativeScriptSafeAreaDescendantHitTest(
+  view: any,
+  point: any,
+  event: any,
+  depth = 0,
+): any {
+  'worklet';
+
+  if (
+    !view ||
+    depth > 32 ||
+    view.hidden === true ||
+    (typeof view.alpha === 'number' && view.alpha <= 0.01) ||
+    nativeViewPointInside(view, point, event) === false
+  ) {
+    return null;
+  }
+
+  if (
+    view.__rnsNativeScriptSafeAreaPassthroughView !== true &&
+    view.userInteractionEnabled !== false
+  ) {
+    const directHit = nativeViewHitTest(view, point, event);
+
+    if (directHit) {
+      return directHit;
+    }
+  }
+
+  const subviews = view.subviews;
+  for (let index = nativeArrayCount(subviews) - 1; index >= 0; index -= 1) {
+    const subview = nativeArrayItem(subviews, index);
+    if (!subview) {
+      continue;
+    }
+
+    const subviewPoint = convertPointFromNativeView(point, subview, view);
+    const subviewHit = nativeScriptSafeAreaDescendantHitTest(
+      subview,
+      subviewPoint,
+      event,
+      depth + 1,
+    );
+
+    if (subviewHit) {
+      return subviewHit;
+    }
+  }
+
+  if (
+    view.__rnsNativeScriptSafeAreaPassthroughView === true ||
+    view.userInteractionEnabled === false
+  ) {
+    return null;
+  }
+
+  return view;
+}
+
+function nativeScriptSafeAreaContainerHitTest(
+  containerView: any,
+  point: any,
+  event: any,
+) {
+  'worklet';
+
+  if (
+    !containerView ||
+    containerView.hidden === true ||
+    (typeof containerView.alpha === 'number' && containerView.alpha <= 0.01) ||
+    nativeViewPointInside(containerView, point, event) === false
+  ) {
+    return null;
+  }
+
+  const subviews = containerView.subviews;
+  for (let index = nativeArrayCount(subviews) - 1; index >= 0; index -= 1) {
+    const subview = nativeArrayItem(subviews, index);
+    if (!subview) {
+      continue;
+    }
+
+    const subviewPoint = convertPointFromNativeView(
+      point,
+      subview,
+      containerView,
+    );
+    const subviewHit = nativeScriptSafeAreaDescendantHitTest(
+      subview,
+      subviewPoint,
+      event,
+      0,
+    );
+
+    if (
+      subviewHit &&
+      !nativeObjectsEqual(subviewHit, containerView) &&
+      subviewHit.__rnsNativeScriptSafeAreaPassthroughView !== true
+    ) {
+      return subviewHit;
+    }
+  }
+
+  return null;
 }
 
 function zeroEdgeInsets() {
@@ -203,6 +444,7 @@ function safeAreaInsetsForRoot(rootView: any) {
 function applyNativeScriptSafeAreaLayout(
   hostView: NativeScriptSafeAreaHostView,
   props: Readonly<NativeScriptSafeAreaViewProps>,
+  refreshHostedChildren = false,
 ) {
   'worklet';
   const rootView = hostView.rootView;
@@ -227,14 +469,20 @@ function applyNativeScriptSafeAreaLayout(
   childrenView.userInteractionEnabled = true;
   childrenView.autoresizingMask = flexibleSizeMask();
 
-  if (
-    childFrameMatches(childrenView, left, top, width, height) &&
-    rootView.__rnsSafeAreaNeedsHostRefresh !== true
-  ) {
+  const didFrameChange = !childFrameMatches(
+    childrenView,
+    left,
+    top,
+    width,
+    height,
+  );
+  const needsHostRefresh = rootView.__rnsSafeAreaNeedsHostRefresh === true;
+
+  if (!didFrameChange && (!refreshHostedChildren || !needsHostRefresh)) {
     return;
   }
 
-  if (!childFrameMatches(childrenView, left, top, width, height)) {
+  if (didFrameChange) {
     childrenView.frame = rectWithOriginAndSize(left, top, width, height);
   }
   childrenView.__rnsSafeAreaDidLayout = true;
@@ -244,9 +492,12 @@ function applyNativeScriptSafeAreaLayout(
   // provider insets into RNSSafeAreaViewShadowNode state so Yoga adjusts the
   // wrapper margins. NativeScript cannot mutate that Fabric C++ shadow state
   // from TypeScript, so this port applies the same selected edge insets to the
-  // hosted child view's UIKit frame and refreshes that host view after every
-  // provider/layout update.
-  NativeScriptRuntime.refreshUIKitHostView(childrenView);
+  // hosted child view's UIKit frame. Host refresh is restricted to Fabric-driven
+  // mount/update paths so UIKit transition layout does not recursively re-enter
+  // the React host while navigation and tab controllers are settling.
+  if (refreshHostedChildren) {
+    NativeScriptRuntime.refreshUIKitHostView(childrenView);
+  }
 }
 
 function nativeScriptSafeAreaViewClass() {
@@ -261,7 +512,11 @@ function nativeScriptSafeAreaViewClass() {
   const UIView = nativeValue('UIView');
   const NativeClassFunction = globalObject.NativeClass;
 
-  if (!UIView || typeof NativeClassFunction !== 'function') {
+  if (
+    !UIView ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIView.extend !== 'function')
+  ) {
     return UIView;
   }
 
@@ -278,6 +533,7 @@ function nativeScriptSafeAreaViewClass() {
           rootView: this,
         },
         this.__rnsSafeAreaProps,
+        false,
       );
     }
 
@@ -291,6 +547,7 @@ function nativeScriptSafeAreaViewClass() {
           rootView: this,
         },
         this.__rnsSafeAreaProps,
+        false,
       );
     }
 
@@ -304,6 +561,7 @@ function nativeScriptSafeAreaViewClass() {
           rootView: this,
         },
         this.__rnsSafeAreaProps,
+        false,
       );
     }
 
@@ -312,9 +570,41 @@ function nativeScriptSafeAreaViewClass() {
 
       this.safeAreaProviderInsetsDidChange(notification);
     }
+
+    hitTestWithEvent(point: any, event: any) {
+      'worklet';
+
+      const hit = nativeScriptSafeAreaContainerHitTest(this, point, event);
+      if (hit) {
+        return hit;
+      }
+
+      const superObject = this.super;
+
+      if (typeof superObject?.hitTestWithEvent === 'function') {
+        const superHit = superObject.hitTestWithEvent(point, event);
+        return nativeObjectsEqual(superHit, this) ? null : superHit;
+      }
+
+      if (typeof superObject?.['hitTest:withEvent:'] === 'function') {
+        const superHit = superObject['hitTest:withEvent:'](point, event);
+        return nativeObjectsEqual(superHit, this) ? null : superHit;
+      }
+
+      return null;
+    }
+
+    'hitTest:withEvent:'(point: any, event: any) {
+      'worklet';
+
+      return this.hitTestWithEvent(point, event);
+    }
   }
 
   const interopTypes = globalObject.interop?.types;
+  const idType = interopTypes?.id ?? nativeValue('NSObject') ?? UIView;
+  const CGPoint = nativeValue('CGPoint');
+  const UIEvent = nativeValue('UIEvent');
   const NSNotification = nativeValue('NSNotification');
   const exposedMethods = {
     didMoveToWindow: {
@@ -328,6 +618,10 @@ function nativeScriptSafeAreaViewClass() {
     'safeAreaProviderInsetsDidChange:': {
       params: NSNotification ? [NSNotification] : [],
       returns: interopTypes?.void,
+    },
+    'hitTest:withEvent:': {
+      params: [CGPoint ?? idType, UIEvent ?? idType],
+      returns: UIView,
     },
   };
 
@@ -368,6 +662,107 @@ function nativeScriptSafeAreaViewClass() {
   return RNSSafeAreaViewNativeScript;
 }
 
+function nativeScriptSafeAreaContentViewClass() {
+  'worklet';
+  const globalObject = globalThis as Record<string, any>;
+  const existing = globalObject[SAFE_AREA_CONTENT_VIEW_CLASS_KEY];
+
+  if (existing) {
+    return existing;
+  }
+
+  const UIView = nativeValue('UIView');
+  const NativeClassFunction = globalObject.NativeClass;
+
+  if (
+    !UIView ||
+    (typeof NativeClassFunction !== 'function' &&
+      typeof UIView.extend !== 'function')
+  ) {
+    return UIView;
+  }
+
+  class RNSSafeAreaContentViewNativeScript extends UIView {
+    hitTestWithEvent(point: any, event: any) {
+      'worklet';
+
+      const hit = nativeScriptSafeAreaContainerHitTest(this, point, event);
+      if (hit) {
+        return hit;
+      }
+
+      const superObject = this.super;
+
+      if (typeof superObject?.hitTestWithEvent === 'function') {
+        const superHit = superObject.hitTestWithEvent(point, event);
+        return nativeObjectsEqual(superHit, this) ? null : superHit;
+      }
+
+      if (typeof superObject?.['hitTest:withEvent:'] === 'function') {
+        const superHit = superObject['hitTest:withEvent:'](point, event);
+        return nativeObjectsEqual(superHit, this) ? null : superHit;
+      }
+
+      return null;
+    }
+
+    'hitTest:withEvent:'(point: any, event: any) {
+      'worklet';
+
+      return this.hitTestWithEvent(point, event);
+    }
+  }
+
+  const interopTypes = globalObject.interop?.types;
+  const idType = interopTypes?.id ?? nativeValue('NSObject') ?? UIView;
+  const CGPoint = nativeValue('CGPoint');
+  const UIEvent = nativeValue('UIEvent');
+  const exposedMethods = {
+    'hitTest:withEvent:': {
+      params: [CGPoint ?? idType, UIEvent ?? idType],
+      returns: UIView,
+    },
+  };
+
+  (RNSSafeAreaContentViewNativeScript as any).ObjCExposedMethods =
+    exposedMethods;
+
+  if (typeof UIView.extend === 'function') {
+    const methods: Record<string, unknown> = {};
+    const methodNames = Object.getOwnPropertyNames(
+      RNSSafeAreaContentViewNativeScript.prototype,
+    );
+
+    for (const methodName of methodNames) {
+      if (methodName === 'constructor') {
+        continue;
+      }
+
+      const descriptor = Object.getOwnPropertyDescriptor(
+        RNSSafeAreaContentViewNativeScript.prototype,
+        methodName,
+      );
+
+      if (descriptor) {
+        Object.defineProperty(methods, methodName, descriptor);
+      }
+    }
+
+    const SafeAreaContentViewClass = UIView.extend(methods, {
+      exposedMethods,
+      name: 'RNSSafeAreaContentViewNativeScript',
+    });
+
+    globalObject[SAFE_AREA_CONTENT_VIEW_CLASS_KEY] = SafeAreaContentViewClass;
+    return SafeAreaContentViewClass;
+  }
+
+  NativeClassFunction(RNSSafeAreaContentViewNativeScript);
+  globalObject[SAFE_AREA_CONTENT_VIEW_CLASS_KEY] =
+    RNSSafeAreaContentViewNativeScript;
+  return RNSSafeAreaContentViewNativeScript;
+}
+
 const NativeScriptSafeAreaViewHost = NativeScriptRuntime.defineUIKitContainer<
   NativeScriptSafeAreaViewProps,
   any,
@@ -378,13 +773,16 @@ const NativeScriptSafeAreaViewHost = NativeScriptRuntime.defineUIKitContainer<
   create(props) {
     'worklet';
     const SafeAreaViewClass = nativeScriptSafeAreaViewClass();
-    const UIView = nativeValue('UIView');
+    const SafeAreaContentViewClass = nativeScriptSafeAreaContentViewClass();
     const UIColor = nativeValue('UIColor');
 
     if (!SafeAreaViewClass || typeof SafeAreaViewClass.alloc !== 'function') {
       throw new Error('UIView is not available in the UI runtime');
     }
-    if (!UIView || typeof UIView.alloc !== 'function') {
+    if (
+      !SafeAreaContentViewClass ||
+      typeof SafeAreaContentViewClass.alloc !== 'function'
+    ) {
       throw new Error('UIView is not available in the UI runtime');
     }
 
@@ -393,7 +791,7 @@ const NativeScriptSafeAreaViewHost = NativeScriptRuntime.defineUIKitContainer<
       rootAllocated && typeof rootAllocated.init === 'function'
         ? rootAllocated.init()
         : rootAllocated;
-    const childrenAllocated = UIView.alloc();
+    const childrenAllocated = SafeAreaContentViewClass.alloc();
     const childrenView =
       childrenAllocated && typeof childrenAllocated.init === 'function'
         ? childrenAllocated.init()
@@ -403,8 +801,10 @@ const NativeScriptSafeAreaViewHost = NativeScriptRuntime.defineUIKitContainer<
     rootView.userInteractionEnabled = true;
     rootView.__rnsSafeAreaProps = props;
     rootView.__rnsSafeAreaChildrenView = childrenView;
+    rootView.__rnsNativeScriptSafeAreaPassthroughView = true;
     childrenView.backgroundColor = UIColor?.clearColor ?? null;
     childrenView.userInteractionEnabled = true;
+    childrenView.__rnsNativeScriptSafeAreaPassthroughView = true;
     childrenView.__rnsNativeScriptSafeAreaContentView = true;
     rootView.addSubview(childrenView);
 
@@ -413,12 +813,12 @@ const NativeScriptSafeAreaViewHost = NativeScriptRuntime.defineUIKitContainer<
   mounted(view, props) {
     'worklet';
 
-    applyNativeScriptSafeAreaLayout(view, props);
+    applyNativeScriptSafeAreaLayout(view, props, true);
   },
   update(view, props) {
     'worklet';
 
-    applyNativeScriptSafeAreaLayout(view, props);
+    applyNativeScriptSafeAreaLayout(view, props, true);
   },
   dispose(view) {
     'worklet';
@@ -449,6 +849,7 @@ export function SafeAreaView(props: SafeAreaViewProps) {
       {...props}
       attachNativeView
       collapsable={false}
+      disableDetachedChildrenTouchHandler
       edges={getNativeEdgesProp(props.edges)}
       style={[styles.flex, props.style]}
     />

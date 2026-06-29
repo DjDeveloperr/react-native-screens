@@ -323,7 +323,7 @@ function applyNativeScriptSearchBarProps(
   }
 
   if (props.screenId && props.subviewId) {
-    registerNativeScriptHeaderSubview(
+    const didChange = registerNativeScriptHeaderSubview(
       {
         allowToolbarIntegration: view.allowToolbarIntegration,
         hideWhenScrolling: view.hideWhenScrolling,
@@ -336,7 +336,9 @@ function applyNativeScriptSearchBarProps(
       },
       view.rootView,
     );
-    notifyNativeScriptHeaderSubviewChanged(props.screenId);
+    if (didChange) {
+      notifyNativeScriptHeaderSubviewChanged(props.screenId);
+    }
   }
 }
 

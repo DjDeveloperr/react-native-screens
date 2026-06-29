@@ -10,11 +10,16 @@ import warnOnce from 'warn-once';
 
 import DebugContainer from './DebugContainer';
 import {
+  HeaderBarButtonItemWithMenu,
   ScreenProps,
   ScreenStackHeaderConfigProps,
   StackPresentationTypes,
 } from '../types';
-import { ScreenStackHeaderConfig } from './ScreenStackHeaderConfig';
+import {
+  ScreenStackHeaderConfig,
+  countNativeScriptHeaderSubviewChildren,
+} from './ScreenStackHeaderConfig';
+import { prepareHeaderBarButtonItems } from './helpers/prepareHeaderBarButtonItems';
 import Screen from './Screen';
 import ScreenStack from './ScreenStack';
 import {
@@ -31,6 +36,7 @@ import {
   TopInsetApplicationContext,
   useTopInsetApplication,
 } from './contexts/TopInsetApplicationContext';
+import { isHeaderBarButtonsAvailableForCurrentPlatform } from '../utils';
 
 type Props = Omit<
   ScreenProps,
@@ -40,6 +46,65 @@ type Props = Omit<
   headerConfig?: ScreenStackHeaderConfigProps | undefined;
   contentStyle?: StyleProp<ViewStyle> | undefined;
 };
+
+type HeaderButtonPressEvent = { nativeEvent: { buttonId: string } };
+type HeaderMenuPressEvent = { nativeEvent: { menuId: string } };
+type PreparedHeaderBarButtonItem = ReturnType<
+  typeof prepareHeaderBarButtonItems
+>[number];
+
+function collectHeaderButtonActions(
+  items: Array<PreparedHeaderBarButtonItem> | undefined,
+  actions: Map<string, () => void>,
+) {
+  if (!items) {
+    return;
+  }
+
+  for (const item of items) {
+    if (
+      item &&
+      item.type === 'button' &&
+      'buttonId' in item &&
+      typeof item.buttonId === 'string' &&
+      typeof item.onPress === 'function'
+    ) {
+      actions.set(item.buttonId, item.onPress);
+    }
+  }
+}
+
+function collectHeaderMenuActions(
+  menu: HeaderBarButtonItemWithMenu['menu'],
+  actions: Map<string, () => void>,
+) {
+  for (const item of menu.items) {
+    if ('items' in item) {
+      collectHeaderMenuActions(item, actions);
+    } else if (
+      'menuId' in item &&
+      typeof item.menuId === 'string' &&
+      typeof item.onPress === 'function'
+    ) {
+      actions.set(item.menuId, item.onPress);
+    }
+  }
+}
+
+function collectHeaderBarMenuActions(
+  items: Array<PreparedHeaderBarButtonItem> | undefined,
+  actions: Map<string, () => void>,
+) {
+  if (!items) {
+    return;
+  }
+
+  for (const item of items) {
+    if (item && item.type === 'menu' && item.menu) {
+      collectHeaderMenuActions(item.menu, actions);
+    }
+  }
+}
 
 function ScreenStackItem(
   {
@@ -125,6 +190,90 @@ function ScreenStackItem(
     headerConfig?.blurEffect !== undefined &&
     headerConfig.blurEffect !== 'none';
   const shouldUseNativeScriptStack = Platform.OS === 'ios';
+  const nativeScriptHeaderLeftBarButtonItems = React.useMemo(
+    () =>
+      shouldUseNativeScriptStack &&
+      headerConfig?.headerLeftBarButtonItems &&
+      isHeaderBarButtonsAvailableForCurrentPlatform
+        ? prepareHeaderBarButtonItems(
+            headerConfig.headerLeftBarButtonItems,
+            'left',
+          )
+        : undefined,
+    [headerConfig?.headerLeftBarButtonItems, shouldUseNativeScriptStack],
+  );
+  const nativeScriptHeaderRightBarButtonItems = React.useMemo(
+    () =>
+      shouldUseNativeScriptStack &&
+      headerConfig?.headerRightBarButtonItems &&
+      isHeaderBarButtonsAvailableForCurrentPlatform
+        ? prepareHeaderBarButtonItems(
+            headerConfig.headerRightBarButtonItems,
+            'right',
+          )
+        : undefined,
+    [headerConfig?.headerRightBarButtonItems, shouldUseNativeScriptStack],
+  );
+  const hasNativeScriptHeaderBarButtonItems =
+    isHeaderBarButtonsAvailableForCurrentPlatform &&
+    ((nativeScriptHeaderLeftBarButtonItems?.length ?? 0) > 0 ||
+      (nativeScriptHeaderRightBarButtonItems?.length ?? 0) > 0);
+  const nativeScriptHeaderConfig = React.useMemo(
+    () =>
+      hasNativeScriptHeaderBarButtonItems && headerConfig
+        ? {
+            ...headerConfig,
+            headerLeftBarButtonItems: nativeScriptHeaderLeftBarButtonItems,
+            headerRightBarButtonItems: nativeScriptHeaderRightBarButtonItems,
+          }
+        : headerConfig,
+    [
+      hasNativeScriptHeaderBarButtonItems,
+      headerConfig,
+      nativeScriptHeaderLeftBarButtonItems,
+      nativeScriptHeaderRightBarButtonItems,
+    ],
+  );
+  const nativeScriptHeaderButtonActionMap = React.useMemo(() => {
+    if (!hasNativeScriptHeaderBarButtonItems) {
+      return undefined;
+    }
+
+    const actions = new Map<string, () => void>();
+    collectHeaderButtonActions(nativeScriptHeaderLeftBarButtonItems, actions);
+    collectHeaderButtonActions(nativeScriptHeaderRightBarButtonItems, actions);
+    return actions;
+  }, [
+    hasNativeScriptHeaderBarButtonItems,
+    nativeScriptHeaderLeftBarButtonItems,
+    nativeScriptHeaderRightBarButtonItems,
+  ]);
+  const nativeScriptHeaderMenuActionMap = React.useMemo(() => {
+    if (!hasNativeScriptHeaderBarButtonItems) {
+      return undefined;
+    }
+
+    const actions = new Map<string, () => void>();
+    collectHeaderBarMenuActions(nativeScriptHeaderLeftBarButtonItems, actions);
+    collectHeaderBarMenuActions(nativeScriptHeaderRightBarButtonItems, actions);
+    return actions;
+  }, [
+    hasNativeScriptHeaderBarButtonItems,
+    nativeScriptHeaderLeftBarButtonItems,
+    nativeScriptHeaderRightBarButtonItems,
+  ]);
+  const onNativeScriptHeaderButtonPress = React.useCallback(
+    (event: HeaderButtonPressEvent) => {
+      nativeScriptHeaderButtonActionMap?.get(event.nativeEvent.buttonId)?.();
+    },
+    [nativeScriptHeaderButtonActionMap],
+  );
+  const onNativeScriptHeaderMenuItemPress = React.useCallback(
+    (event: HeaderMenuPressEvent) => {
+      nativeScriptHeaderMenuActionMap?.get(event.nativeEvent.menuId)?.();
+    },
+    [nativeScriptHeaderMenuActionMap],
+  );
 
   warnOnce(
     hasEdgeEffects && hasBlurEffect && isIOS26OrHigher,
@@ -161,7 +310,8 @@ function ScreenStackItem(
           style={debugContainerStyle}
           stackPresentation={stackPresentationWithDefault}>
           {shouldUseSafeAreaView ? (
-            <SafeAreaView edges={getSafeAreaEdges(headerConfig)}>
+            <SafeAreaView
+              edges={getSafeAreaEdges(headerConfig, isHeaderInModal)}>
               {children}
             </SafeAreaView>
           ) : (
@@ -188,6 +338,11 @@ function ScreenStackItem(
     </>
   );
 
+  const nativeScriptHeaderSubviewCount =
+    Platform.OS === 'ios'
+      ? countNativeScriptHeaderSubviewChildren(nativeScriptHeaderConfig?.children)
+      : 0;
+
   if (shouldUseNativeScriptStack) {
     if (isHeaderInModal) {
       // NATIVESCRIPT_PORT_DEVIATION: upstream's inner modal Screen does not need
@@ -210,11 +365,24 @@ function ScreenStackItem(
           stackPresentation={stackPresentationWithDefault}
           style={[style, internalScreenStyle]}
           {...rest}>
-          <NativeScriptScreenStack style={styles.container}>
+          <NativeScriptScreenStack
+            modalContentParentScreenId={screenId}
+            style={styles.container}>
             <NativeScriptScreenStackItem
               activityState={activityState}
-              headerConfig={headerConfig}
+              headerConfig={nativeScriptHeaderConfig}
+              onNativeScriptHeaderButtonPress={
+                hasNativeScriptHeaderBarButtonItems
+                  ? onNativeScriptHeaderButtonPress
+                  : undefined
+              }
+              onNativeScriptHeaderMenuItemPress={
+                hasNativeScriptHeaderBarButtonItems
+                  ? onNativeScriptHeaderMenuItemPress
+                  : undefined
+              }
               onHeaderHeightChange={onHeaderHeightChange}
+              nativeScriptHeaderSubviewCount={nativeScriptHeaderSubviewCount}
               screenId={modalHeaderScreenId}
               scrollEdgeEffects={scrollEdgeEffects}
               shouldFreeze={shouldFreeze}
@@ -232,11 +400,22 @@ function ScreenStackItem(
         ref={setCurrentScreenRef}
         activityState={activityState}
         contentStyle={contentStyle}
-        headerConfig={headerConfig}
+        headerConfig={nativeScriptHeaderConfig}
+        onNativeScriptHeaderButtonPress={
+          hasNativeScriptHeaderBarButtonItems
+            ? onNativeScriptHeaderButtonPress
+            : undefined
+        }
+        onNativeScriptHeaderMenuItemPress={
+          hasNativeScriptHeaderBarButtonItems
+            ? onNativeScriptHeaderMenuItemPress
+            : undefined
+        }
         scrollEdgeEffects={isHeaderInModal ? undefined : scrollEdgeEffects}
         onHeaderHeightChange={
           isHeaderInModal ? undefined : onHeaderHeightChange
         }
+        nativeScriptHeaderSubviewCount={nativeScriptHeaderSubviewCount}
         screenId={screenId}
         shouldFreeze={shouldFreeze}
         sheetAllowedDetents={sheetAllowedDetents}
@@ -353,8 +532,13 @@ function extractScreenStyles(style: StyleProp<ViewStyle>): SplitStyleResult {
 
 function getSafeAreaEdges(
   headerConfig?: ScreenStackHeaderConfigProps,
+  isHeaderInModal = false,
 ): SafeAreaViewProps['edges'] {
   if (Platform.OS !== 'ios' || parseInt(Platform.Version, 10) < 26) {
+    return {};
+  }
+
+  if (isHeaderInModal) {
     return {};
   }
 
