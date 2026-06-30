@@ -286,18 +286,24 @@ function ScreenStackItem(
   );
 
   // For iOS, we need to extract background color and apply it to Screen
-  // due to the safe area inset at the bottom of ScreenContentWrapper
+  // due to the safe area inset or native presentation area below ScreenContentWrapper.
   let internalScreenStyle;
-
-  if (
-    stackPresentationWithDefault === 'formSheet' &&
+  const shouldExtractScreenBackground =
     Platform.OS === 'ios' &&
-    contentStyle
-  ) {
+    (stackPresentationWithDefault === 'formSheet' ||
+      (shouldUseNativeScriptStack && stackPresentationWithDefault !== 'push'));
+  const shouldCopyNativeScriptScreenBackground =
+    Platform.OS === 'ios' &&
+    shouldUseNativeScriptStack &&
+    stackPresentationWithDefault !== 'push';
+
+  if (shouldExtractScreenBackground && contentStyle) {
     const { screenStyles, contentWrapperStyles } =
       extractScreenStyles(contentStyle);
     internalScreenStyle = screenStyles;
-    contentStyle = contentWrapperStyles;
+    if (!shouldCopyNativeScriptScreenBackground) {
+      contentStyle = contentWrapperStyles;
+    }
   }
 
   const shouldUseSafeAreaView = isIOS26OrHigher;
@@ -358,6 +364,7 @@ function ScreenStackItem(
           activityState={activityState}
           headerConfig={undefined}
           onHeaderHeightChange={undefined}
+          nativeScriptScreenBackgroundColor={internalScreenStyle?.backgroundColor}
           screenId={screenId}
           scrollEdgeEffects={undefined}
           shouldFreeze={shouldFreeze}
@@ -383,11 +390,14 @@ function ScreenStackItem(
               }
               onHeaderHeightChange={onHeaderHeightChange}
               nativeScriptHeaderSubviewCount={nativeScriptHeaderSubviewCount}
+              nativeScriptScreenBackgroundColor={
+                internalScreenStyle?.backgroundColor
+              }
               screenId={modalHeaderScreenId}
               scrollEdgeEffects={scrollEdgeEffects}
               shouldFreeze={shouldFreeze}
               stackPresentation="push"
-              style={StyleSheet.absoluteFill}>
+              style={[StyleSheet.absoluteFill, internalScreenStyle]}>
               {content}
             </NativeScriptScreenStackItem>
           </NativeScriptScreenStack>
@@ -416,6 +426,7 @@ function ScreenStackItem(
           isHeaderInModal ? undefined : onHeaderHeightChange
         }
         nativeScriptHeaderSubviewCount={nativeScriptHeaderSubviewCount}
+        nativeScriptScreenBackgroundColor={internalScreenStyle?.backgroundColor}
         screenId={screenId}
         shouldFreeze={shouldFreeze}
         sheetAllowedDetents={sheetAllowedDetents}

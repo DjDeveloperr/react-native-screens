@@ -1065,6 +1065,28 @@ describe('NativeScript ScreenStack port', () => {
       'getSafeAreaEdges(headerConfig, isHeaderInModal)',
     );
     expect(screenStackItemSource).toContain(
+      'const shouldExtractScreenBackground =',
+    );
+    expect(screenStackItemSource).toContain(
+      "shouldUseNativeScriptStack && stackPresentationWithDefault !== 'push'",
+    );
+    expect(screenStackItemSource).toContain(
+      'const shouldCopyNativeScriptScreenBackground =',
+    );
+    expect(screenStackItemSource).toContain(
+      'if (shouldExtractScreenBackground && contentStyle) {',
+    );
+    expect(screenStackItemSource).toContain(
+      'if (!shouldCopyNativeScriptScreenBackground) {\n' +
+        '      contentStyle = contentWrapperStyles;',
+    );
+    expect(screenStackItemSource).toContain(
+      'style={[StyleSheet.absoluteFill, internalScreenStyle]}',
+    );
+    expect(screenStackItemSource).toContain(
+      'nativeScriptScreenBackgroundColor={internalScreenStyle?.backgroundColor}',
+    );
+    expect(screenStackItemSource).toContain(
       'if (isHeaderInModal) {\n    return {};\n  }',
     );
     expect(screenStackItemSource).not.toContain(
@@ -8935,6 +8957,15 @@ describe('NativeScript ScreenStack port', () => {
       'const shouldRepairContent =\n      flushDisplay || !screenContentIsReady(screenId, registry);',
     );
     expect(stackSource).toContain(
+      'function applyScreenControllerBackgroundColor',
+    );
+    expect(stackSource).toContain(
+      'registry.screenProps[screenId]?.nativeScriptScreenBackgroundColor',
+    );
+    expect(stackSource).toContain(
+      'contentWrapperView.backgroundColor = nativeBackgroundColor;',
+    );
+    expect(stackSource).toContain(
       'layoutScreenHostedReactSubviews(\n' +
         '        controller,\n' +
         '        controllerView,\n' +
@@ -8954,6 +8985,10 @@ describe('NativeScript ScreenStack port', () => {
         '      false,\n' +
         "      'refresh-visible-stack-content',\n" +
         '    );',
+    );
+    expect(stackSource).toContain(
+      'if (flushDisplay) {\n' +
+        '        flushKnownUIKitHostView(controllerView);',
     );
     expect(stackSource).toContain(
       'return controllerScreenId(arrayItem(viewControllers, count - 1));',
@@ -16062,6 +16097,42 @@ describe('NativeScript ScreenStack port', () => {
     expect(popSource).toContain('previousTopController,');
     expect(replaceSource).toContain('const transitionController = closing');
     expect(replaceSource).toContain('transitionController,');
+  });
+
+  it('repairs selected NativeScript tab content when explicit selection finishes', () => {
+    const finishSelectionSource = tabsSource.slice(
+      tabsSource.indexOf('function finishTabsExplicitSelectionUpdate'),
+      tabsSource.indexOf('function notifySelectedTabAccessibilityLayoutChanged'),
+    );
+
+    expect(finishSelectionSource).toContain(
+      'selectedView?.__rnsNativeScriptTabsNeedsPostSelectionTouchRefresh === true',
+    );
+    expect(finishSelectionSource).toContain(
+      'RECONCILE_SELECTED_TAB_CONTROLLER_VIEW_KEY',
+    );
+    expect(finishSelectionSource).toContain(
+      'callTabsWorkletFunction(\n' +
+        '        reconcileSelectedTab,\n' +
+        '        tabController,\n' +
+        '        resolvedSelectedController,',
+    );
+    expect(
+      finishSelectionSource.indexOf('callTabsWorkletFunction('),
+    ).toBeLessThan(
+      finishSelectionSource.indexOf('publishSelectedTabAccessibilityElements('),
+    );
+    expect(tabsSource).toContain(
+      'needsPostSelectionTouchRefresh || !embeddedStackWasStableReadyBeforeRefresh',
+    );
+    expect(tabsSource).toContain(
+      'const didRefreshEmbeddedStackContent =\n' +
+        '    shouldRefreshEmbeddedStackContent &&',
+    );
+    expect(tabsSource).toContain(
+      'didRefreshEmbeddedStackContent ||\n' +
+        '    (!hasEmbeddedStackNavigationController &&',
+    );
   });
 
   it('declares worklet helpers before worklets that capture them', () => {

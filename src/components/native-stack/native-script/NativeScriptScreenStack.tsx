@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { View } from 'react-native';
+import type { View, ViewStyle } from 'react-native';
 
 import type {
   SearchBarPlacement,
@@ -30,6 +30,7 @@ export const NativeScriptScreenStackItem =
         contentStyle?: ScreenProps['style'];
         headerConfig?: unknown;
         nativeScriptHeaderSubviewCount?: number | undefined;
+        nativeScriptScreenBackgroundColor?: ViewStyle['backgroundColor'];
         onNativeScriptHeaderButtonPress?:
           | ((event: { nativeEvent: { buttonId: string } }) => void)
           | undefined;

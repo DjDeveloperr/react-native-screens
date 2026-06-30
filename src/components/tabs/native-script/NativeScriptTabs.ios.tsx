@@ -3652,13 +3652,29 @@ function finishTabsExplicitSelectionUpdate(
 ) {
   'worklet';
 
-  const selectedView =
-    selectedController?.view ?? tabController?.selectedViewController?.view;
+  const resolvedSelectedController =
+    selectedController ?? tabController?.selectedViewController;
+  const selectedView = tabsScreenControllerView(resolvedSelectedController);
+
+  if (
+    selectedView?.__rnsNativeScriptTabsNeedsPostSelectionTouchRefresh === true
+  ) {
+    const reconcileSelectedTab = (globalThis as Record<string, any>)[
+      RECONCILE_SELECTED_TAB_CONTROLLER_VIEW_KEY
+    ];
+    if (typeof reconcileSelectedTab === 'function') {
+      callTabsWorkletFunction(
+        reconcileSelectedTab,
+        tabController,
+        resolvedSelectedController,
+      );
+    }
+  }
 
   if (selectedView) {
     publishSelectedTabAccessibilityElements(
       tabController,
-      selectedController ?? tabController?.selectedViewController,
+      resolvedSelectedController,
       selectedView,
     );
   } else {
@@ -5257,9 +5273,11 @@ function reconcileSelectedTabControllerView(
       selectedView,
       false,
     );
-  const didRefreshEmbeddedStackContent =
+  const shouldRefreshEmbeddedStackContent =
     hasEmbeddedStackNavigationController &&
-    !embeddedStackWasStableReadyBeforeRefresh &&
+    (needsPostSelectionTouchRefresh || !embeddedStackWasStableReadyBeforeRefresh);
+  const didRefreshEmbeddedStackContent =
+    shouldRefreshEmbeddedStackContent &&
     refreshSelectedTabEmbeddedStackContent(navigationController, true);
   const beforeRefreshContentCounts =
     selectedTabAttachedContentCounts(selectedView);
@@ -5420,6 +5438,7 @@ function reconcileSelectedTabControllerView(
     clearSelectedTabNeedsPostSelectionTouchRefresh(selectedView);
   }
   if (
+    didRefreshEmbeddedStackContent ||
     (!hasEmbeddedStackNavigationController &&
       !didRefreshHostStackTouchSurfaces) ||
     (canRefreshSelectedTabEmbeddedStackTouchSurfaces &&

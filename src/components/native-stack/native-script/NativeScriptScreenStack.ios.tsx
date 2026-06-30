@@ -382,6 +382,7 @@ type NativeScriptScreenStackItemProps = Omit<
       | ((event: { nativeEvent: { menuId: string } }) => void)
       | undefined;
     nativeScriptHeaderSubviewCount?: number | undefined;
+    nativeScriptScreenBackgroundColor?: ViewStyle['backgroundColor'] | undefined;
     parentId?: string | undefined;
     retainedByStack?: boolean | undefined;
     screenId: string;
@@ -6817,6 +6818,42 @@ function screenContentWrapperMountedFrame(
     : fallbackFrame;
 }
 
+function applyScreenControllerBackgroundColor(
+  screenId: string | undefined,
+  registry: NativeScriptStackRegistry,
+  controllerView: any,
+) {
+  'worklet';
+
+  if (!screenId) {
+    return false;
+  }
+
+  const backgroundColor =
+    registry.screenProps[screenId]?.nativeScriptScreenBackgroundColor;
+
+  if (backgroundColor == null) {
+    return false;
+  }
+
+  const nativeBackgroundColor = nativeColor(backgroundColor, 'clearColor');
+
+  if (!nativeBackgroundColor) {
+    return false;
+  }
+
+  if (controllerView) {
+    controllerView.backgroundColor = nativeBackgroundColor;
+  }
+
+  const contentWrapperView = registry.screenContentWrapperViews[screenId];
+  if (contentWrapperView) {
+    contentWrapperView.backgroundColor = nativeBackgroundColor;
+  }
+
+  return true;
+}
+
 function normalizeScreenControllerViewFrame(
   screenId: string | undefined,
   registry: NativeScriptStackRegistry,
@@ -6846,6 +6883,9 @@ function normalizeScreenControllerViewFrame(
       controllerView,
       boundsRectForFilledHostedSubview(controllerView, normalizedFrame),
     ) || didMutate;
+  didMutate =
+    applyScreenControllerBackgroundColor(screenId, registry, controllerView) ||
+    didMutate;
 
   return didMutate;
 }

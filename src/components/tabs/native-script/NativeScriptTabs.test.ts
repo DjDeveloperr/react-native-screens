@@ -683,7 +683,21 @@ describe('NativeScriptTabsHost', () => {
       source.indexOf('function notifySelectedTabAccessibilityLayoutChanged'),
     );
     expect(finishExplicitSelectionSource).toContain(
-      'selectedController?.view ?? tabController?.selectedViewController?.view',
+      'const resolvedSelectedController =\n' +
+        '    selectedController ?? tabController?.selectedViewController;',
+    );
+    expect(finishExplicitSelectionSource).toContain(
+      'const selectedView = tabsScreenControllerView(resolvedSelectedController);',
+    );
+    expect(finishExplicitSelectionSource).toContain(
+      'RECONCILE_SELECTED_TAB_CONTROLLER_VIEW_KEY',
+    );
+    expect(
+      finishExplicitSelectionSource.indexOf('callTabsWorkletFunction('),
+    ).toBeLessThan(
+      finishExplicitSelectionSource.indexOf(
+        'publishSelectedTabAccessibilityElements(',
+      ),
     );
     expect(finishExplicitSelectionSource).toContain(
       'publishSelectedTabAccessibilityElements(',
@@ -1147,7 +1161,7 @@ describe('NativeScriptTabsHost', () => {
       'const didRefreshEmbeddedStackContent =',
     );
     expect(reconcileSource).toContain(
-      '!embeddedStackWasStableReadyBeforeRefresh &&',
+      'needsPostSelectionTouchRefresh || !embeddedStackWasStableReadyBeforeRefresh',
     );
     expect(source).toContain(
       'function selectedTabAttachedInteractiveDescendantCount',
@@ -2793,13 +2807,13 @@ describe('NativeScriptTabsHost', () => {
       );
 
       expect(setTimeoutSpy).not.toHaveBeenCalled();
-      expect(tabController.view.setNeedsLayout).not.toHaveBeenCalled();
+      expect(tabController.view.setNeedsLayout).toHaveBeenCalled();
       expect(nextController.view.hidden).toBe(false);
       expect(nextController.view.userInteractionEnabled).toBe(true);
       expect(nextController.view.setNeedsLayout).toHaveBeenCalled();
       expect(
         nextController.view.__rnsNativeScriptTabsNeedsPostSelectionTouchRefresh,
-      ).toBe(true);
+      ).toBeUndefined();
     } finally {
       setTimeoutSpy.mockRestore();
     }
